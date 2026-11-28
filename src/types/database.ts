@@ -127,6 +127,19 @@ export interface DbMissionStagesData {
     keyLocalPhrases: { phrase: string; vietnameseMeaning: string }[];
     culturalTip: string;
   };
+  vocabQuestions?: DbCountryVocabularyQuestion[];
+  listeningQuestions?: DbCountryListeningQuestion[];
+  sentenceRounds?: DbCountrySentenceRound[];
+  speakingTurns?: DbCountrySpeakingTurn[];
+  circuitBoards?: DbCountryCircuitBoard[];
+  techRunnerQuestions?: DbCountryTechRunnerQuestion[];
+  targetSmasherItems?: DbCountryTargetSmasherItem[];
+  moduleConfig?: {
+    vocabularyEnabled: boolean;
+    listeningEnabled: boolean;
+    speakingEnabled: boolean;
+    enabledGames: CountryGameType[];
+  };
 }
 
 export interface DbMission {

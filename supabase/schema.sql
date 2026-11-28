@@ -344,7 +344,8 @@ BEGIN
     id,
     email,
     display_name,
-    school_name
+    school_name,
+    role
   )
   VALUES (
     NEW.id,
@@ -358,11 +359,45 @@ BEGIN
     COALESCE(
       NEW.raw_user_meta_data->>'school_name',
       'High School Student'
-    )
+    ),
+    CASE
+      WHEN LOWER(COALESCE(NEW.email, '')) = 'trietdoan2103@gmail.com' THEN 'admin'
+      ELSE 'student'
+    END
   )
-  ON CONFLICT (id) DO NOTHING;
+  ON CONFLICT (id) DO UPDATE
+    SET role = CASE
+      WHEN LOWER(COALESCE(EXCLUDED.email, '')) = 'trietdoan2103@gmail.com' THEN 'admin'
+      ELSE public.profiles.role
+    END;
   RETURN NEW;
 END;
+$$;
+
+-- Ensure admin role is granted to trietdoan2103@gmail.com on existing profiles
+UPDATE public.profiles
+SET role = 'admin'
+WHERE LOWER(COALESCE(email, '')) = 'trietdoan2103@gmail.com';
+
+-- Helper function to check whether the current authenticated user is an Admin
+CREATE OR REPLACE FUNCTION public.is_admin()
+RETURNS BOOLEAN
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = public
+STABLE
+AS $$
+  SELECT
+    LOWER(COALESCE(auth.jwt() ->> 'email', '')) = 'trietdoan2103@gmail.com'
+    OR EXISTS (
+      SELECT 1
+      FROM public.profiles p
+      WHERE p.id = auth.uid()
+        AND (
+          p.role = 'admin'
+          OR LOWER(COALESCE(p.email, '')) = 'trietdoan2103@gmail.com'
+        )
+    );
 $$;
 
 DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
@@ -449,18 +484,18 @@ BEGIN
     EXECUTE format('DROP POLICY IF EXISTS "Admins can insert %1$s" ON public.%1$I', t);
     EXECUTE format(
       'CREATE POLICY "Admins can insert %1$s" ON public.%1$I FOR INSERT TO authenticated
-       WITH CHECK (EXISTS (SELECT 1 FROM public.profiles p WHERE p.id = auth.uid() AND p.role = ''admin''))', t);
+       WITH CHECK (public.is_admin())', t);
 
     EXECUTE format('DROP POLICY IF EXISTS "Admins can update %1$s" ON public.%1$I', t);
     EXECUTE format(
       'CREATE POLICY "Admins can update %1$s" ON public.%1$I FOR UPDATE TO authenticated
-       USING (EXISTS (SELECT 1 FROM public.profiles p WHERE p.id = auth.uid() AND p.role = ''admin''))
-       WITH CHECK (EXISTS (SELECT 1 FROM public.profiles p WHERE p.id = auth.uid() AND p.role = ''admin''))', t);
+       USING (public.is_admin())
+       WITH CHECK (public.is_admin())', t);
 
     EXECUTE format('DROP POLICY IF EXISTS "Admins can delete %1$s" ON public.%1$I', t);
     EXECUTE format(
       'CREATE POLICY "Admins can delete %1$s" ON public.%1$I FOR DELETE TO authenticated
-       USING (EXISTS (SELECT 1 FROM public.profiles p WHERE p.id = auth.uid() AND p.role = ''admin''))', t);
+       USING (public.is_admin())', t);
   END LOOP;
 END $$;
 
@@ -622,18 +657,18 @@ BEGIN
     EXECUTE format('DROP POLICY IF EXISTS "Admins can insert %1$s" ON public.%1$I', t);
     EXECUTE format(
       'CREATE POLICY "Admins can insert %1$s" ON public.%1$I FOR INSERT TO authenticated
-       WITH CHECK (EXISTS (SELECT 1 FROM public.profiles p WHERE p.id = auth.uid() AND p.role = ''admin''))', t);
+       WITH CHECK (public.is_admin())', t);
 
     EXECUTE format('DROP POLICY IF EXISTS "Admins can update %1$s" ON public.%1$I', t);
     EXECUTE format(
       'CREATE POLICY "Admins can update %1$s" ON public.%1$I FOR UPDATE TO authenticated
-       USING (EXISTS (SELECT 1 FROM public.profiles p WHERE p.id = auth.uid() AND p.role = ''admin''))
-       WITH CHECK (EXISTS (SELECT 1 FROM public.profiles p WHERE p.id = auth.uid() AND p.role = ''admin''))', t);
+       USING (public.is_admin())
+       WITH CHECK (public.is_admin())', t);
 
     EXECUTE format('DROP POLICY IF EXISTS "Admins can delete %1$s" ON public.%1$I', t);
     EXECUTE format(
       'CREATE POLICY "Admins can delete %1$s" ON public.%1$I FOR DELETE TO authenticated
-       USING (EXISTS (SELECT 1 FROM public.profiles p WHERE p.id = auth.uid() AND p.role = ''admin''))', t);
+       USING (public.is_admin())', t);
   END LOOP;
 END $$;
 

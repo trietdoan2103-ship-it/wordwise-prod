@@ -1,16 +1,15 @@
-"use client";
-
+import { unstable_noStore as noStore } from "next/cache";
 import ProtectedRoute from "@/components/auth/ProtectedRoute";
 import LearningLibraryView from "@/components/dashboard/LearningLibraryView";
 
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 /**
- * Learning Library Hub page — Milestone P3.1.
- *
- * Displays the 6 STEM clean-tech curriculum lessons with tab filters,
- * lesson cards, completion tracking, and reading modal.
- * Protected route: requires active demo session.
+ * Learning Library Hub page — Live Supabase Single Source of Truth.
  */
 export default function DashboardLibraryPage() {
+  noStore();
   return (
     <ProtectedRoute>
       <LearningLibraryView defaultTab="all" />

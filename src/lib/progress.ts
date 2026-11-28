@@ -32,6 +32,7 @@ import type {
   DbCountryVocabulary,
   DbCountryVocabularyQuestion,
   DbMission,
+  DbMissionStagesData,
   DbUserMissionProgress,
 } from "@/types/database";
 
@@ -568,21 +569,69 @@ async function fetchMissionBase(
 
     const vocabularyItems =
       Array.isArray(stagesData?.vocabularyItems) &&
-      stagesData.vocabularyItems.length > 0
+      stagesData.vocabularyItems.length > 0 &&
+      !stagesData.vocabularyItems.some((v) => /latte|barista/i.test(v.word || ""))
         ? stagesData.vocabularyItems
         : staticVocabularyItems;
 
     const listeningItems =
       Array.isArray(stagesData?.listeningItems) &&
-      stagesData.listeningItems.length > 0
+      stagesData.listeningItems.length > 0 &&
+      !stagesData.listeningItems.some((l) => /latte|coffee/i.test(l.sentence || ""))
         ? stagesData.listeningItems
         : staticListeningItems;
 
     const sentenceItems =
       Array.isArray(stagesData?.sentenceItems) &&
-      stagesData.sentenceItems.length > 0
+      stagesData.sentenceItems.length > 0 &&
+      !stagesData.sentenceItems.some((s) => /latte|espresso/i.test(s.targetSentence || ""))
         ? stagesData.sentenceItems
         : staticSentenceItems;
+
+    const speakingTurns =
+      Array.isArray(stagesData?.speakingTurns) &&
+      stagesData.speakingTurns.length > 0
+        ? stagesData.speakingTurns
+        : DEFAULT_USA_SPEAKING_TURNS;
+
+    const circuitBoards =
+      Array.isArray(stagesData?.circuitBoards) &&
+      stagesData.circuitBoards.length > 0
+        ? stagesData.circuitBoards
+        : DEFAULT_USA_CIRCUIT_BOARDS;
+
+    const techRunnerQuestions =
+      Array.isArray(stagesData?.techRunnerQuestions) &&
+      stagesData.techRunnerQuestions.length > 0
+        ? stagesData.techRunnerQuestions
+        : DEFAULT_USA_TECH_RUNNER_QUESTIONS;
+
+    const targetSmasherItems =
+      Array.isArray(stagesData?.targetSmasherItems) &&
+      stagesData.targetSmasherItems.length > 0
+        ? stagesData.targetSmasherItems
+        : DEFAULT_USA_TARGET_SMASHER_ITEMS;
+
+    const defaultEnabledGames: CountryGameType[] =
+      normalizedId === "usa"
+        ? ["sentence_assembler", "circuit_repair", "tech_runner", "target_smasher"]
+        : ["sentence_assembler"];
+
+    const moduleConfig: CountryModuleConfig = stagesData?.moduleConfig
+      ? {
+          vocabularyEnabled: Boolean(stagesData.moduleConfig.vocabularyEnabled),
+          listeningEnabled: Boolean(stagesData.moduleConfig.listeningEnabled),
+          speakingEnabled: Boolean(stagesData.moduleConfig.speakingEnabled),
+          enabledGames: Array.isArray(stagesData.moduleConfig.enabledGames)
+            ? stagesData.moduleConfig.enabledGames
+            : defaultEnabledGames,
+        }
+      : {
+          vocabularyEnabled: true,
+          listeningEnabled: true,
+          speakingEnabled: true,
+          enabledGames: defaultEnabledGames,
+        };
 
     return {
       countryId: dbCountry?.id || normalizedId,
@@ -592,19 +641,15 @@ async function fetchMissionBase(
       vocabularyItems,
       listeningItems,
       sentenceItems,
-      speakingTurns: DEFAULT_USA_SPEAKING_TURNS,
-      circuitBoards: DEFAULT_USA_CIRCUIT_BOARDS,
-      techRunnerQuestions: DEFAULT_USA_TECH_RUNNER_QUESTIONS,
-    targetSmasherItems: DEFAULT_USA_TARGET_SMASHER_ITEMS,
-      moduleConfig: {
-        vocabularyEnabled: true,
-        listeningEnabled: true,
-        speakingEnabled: true,
-        enabledGames: ["sentence_assembler", "circuit_repair", "tech_runner", "target_smasher"],
-      },
+      speakingTurns,
+      circuitBoards,
+      techRunnerQuestions,
+      targetSmasherItems,
+      moduleConfig,
       culturalBriefing:
         stagesData?.culturalBriefing &&
-        typeof stagesData.culturalBriefing.communicationStyle === "string"
+        typeof stagesData.culturalBriefing.communicationStyle === "string" &&
+        !/barista|latte/i.test(stagesData.culturalBriefing.communicationStyle)
           ? stagesData.culturalBriefing
           : getDefaultCulturalBriefingForCountry(normalizedId),
     };
@@ -1285,28 +1330,24 @@ export function writeCountryStudioCache(
 
 /**
  * Syncs the granular Vocabulary, Listening, Sentence Assembler, Speaking AI turns,
- * and Module/Game toggles directly into `public.missions.stages_data` and
- * `public.country_module_configs`.
+ * Mini-Games, Cultural Briefing, and Module/Game toggles directly into
+ * `public.missions.stages_data` and `public.country_module_configs` in Supabase.
+ * Returns `{ error }` if the database write fails or is blocked by RLS.
  */
 export async function syncCountryMissionStagesData(
   countryId: string,
   cache: LocalCountryStudioCache
-): Promise<void> {
-  // Once an admin has saved settings, stop force-enabling Circuit Repair for USA
-  if (typeof window !== "undefined" && countryId.toLowerCase() === "usa") {
-    try {
-      localStorage.setItem(USA_CIRCUIT_FLAG_KEY, "1");
-      localStorage.setItem(USA_TARGET_FLAG_KEY, "1");
-    } catch {
-      /* ignore */
-    }
-  }
+): Promise<{ error: string | null }> {
   writeCountryStudioCache(countryId, cache);
-  if (!isSupabaseConfigured()) return;
+  if (!isSupabaseConfigured()) {
+    return { error: "Supabase is not configured." };
+  }
+
   try {
     const supabase = createClient();
     const cid = countryId.toLowerCase();
 
+    // 1. Best-effort sync to granular country_module_configs table (if migrated)
     await supabase.from("country_module_configs").upsert(
       {
         country_id: cid,
@@ -1319,18 +1360,48 @@ export async function syncCountryMissionStagesData(
       { onConflict: "country_id" }
     );
 
-    const { data: existing } = await supabase
+    // 2. Always persist the complete Country Studio bundle into public.missions.stages_data
+    const { data: existing, error: fetchErr } = await supabase
       .from("missions")
       .select("*")
       .eq("country_id", cid)
       .maybeSingle<DbMission>();
-    if (!existing) return;
 
-    const nextStagesData = {
-      ...existing.stages_data,
+    if (fetchErr) {
+      return { error: fetchErr.message };
+    }
+
+    const staticBundle = getStaticMissionBundle(cid);
+    const baseStagesData = existing?.stages_data || {
+      stages: staticBundle?.mission.stages || [
+        { id: "vocabulary", type: "vocabulary" as const, title: "Vocabulary" },
+        { id: "listening", type: "listening" as const, title: "Listening" },
+        { id: "sentence", type: "sentence" as const, title: "Sentence" },
+      ],
+      reward: staticBundle?.mission.reward || {
+        stamp: { name: "Clean Energy Grid Pioneer", icon: "🇺🇸" },
+        badge: { name: "USA Clean-Tech Pioneer", icon: "🏅" },
+        gift: {
+          name: "Mini Solar Turbine Model",
+          icon: "☀️",
+          description:
+            "A precision kinetic solar-and-wind turbine engineering model from the USA Clean Energy Innovation Lab.",
+        },
+        bonusXP: 30,
+      },
+      vocabularyItems: [],
+      listeningItems: [],
+      sentenceItems: [],
+    };
+
+    const nextStagesData: DbMissionStagesData = {
+      ...baseStagesData,
       vocabularyItems: mapVocabQuestionsToItems(cache.vocabQuestions),
       listeningItems: mapListeningQuestionsToItems(cache.listeningQuestions),
       sentenceItems: mapSentenceRoundsToItems(cache.sentenceRounds),
+      vocabQuestions: cache.vocabQuestions,
+      listeningQuestions: cache.listeningQuestions,
+      sentenceRounds: cache.sentenceRounds,
       speakingTurns: cache.speakingTurns,
       circuitBoards: cache.circuitBoards,
       techRunnerQuestions: cache.techRunnerQuestions,
@@ -1341,29 +1412,82 @@ export async function syncCountryMissionStagesData(
         getDefaultCulturalBriefingForCountry(countryId),
     };
 
-    await supabase
-      .from("missions")
-      .update({ stages_data: nextStagesData })
-      .eq("id", existing.id);
-  } catch {
-    // ignore sync error
+    if (existing) {
+      const { data: updatedRows, error: updateErr } = await supabase
+        .from("missions")
+        .update({ stages_data: nextStagesData })
+        .eq("id", existing.id)
+        .select();
+
+      if (updateErr) {
+        return { error: updateErr.message };
+      }
+      if (!updatedRows || updatedRows.length === 0) {
+        return {
+          error:
+            "Supabase RLS blocked saving to public.missions (0 rows updated). Please run the Admin RLS policy SQL in Supabase SQL Editor.",
+        };
+      }
+    } else {
+      const missionId =
+        staticBundle?.mission.id || `mission-${cid}`;
+      const missionTitle =
+        staticBundle?.mission.title ||
+        (cid === "usa" ? "Renewable Energy" : `${cid.toUpperCase()} Mission`);
+
+      const { data: insertedRows, error: insertErr } = await supabase
+        .from("missions")
+        .upsert(
+          {
+            id: missionId,
+            country_id: cid,
+            title: missionTitle,
+            briefing: staticBundle?.mission.briefing || null,
+            learning_recap: staticBundle?.mission.learningRecap || null,
+            stages_data: nextStagesData,
+            bonus_xp: 30,
+          },
+          { onConflict: "id" }
+        )
+        .select();
+
+      if (insertErr) {
+        return { error: insertErr.message };
+      }
+      if (!insertedRows || insertedRows.length === 0) {
+        return {
+          error:
+            "Supabase RLS blocked inserting into public.missions. Please run the Admin RLS policy SQL in Supabase SQL Editor.",
+        };
+      }
+    }
+
+    return { error: null };
+  } catch (err) {
+    return {
+      error:
+        err instanceof Error
+          ? err.message
+          : "Failed to save country mission data to Supabase.",
+    };
   }
 }
 
 /**
- * Fetches a country's mission bundle, then overlays live vocabulary questions,
- * listening questions, sentence assembler rounds, speaking AI turns, and
- * per-country module/game toggles from Supabase.
+ * Fetches a country's mission bundle from Supabase (`country_*` tables and
+ * `public.missions.stages_data`), using Supabase as the single source of truth
+ * so normal browsers, Incognito tabs, and all devices see identical content.
  */
 export async function fetchMissionByCountry(
   countryId: string
 ): Promise<MissionBundle | null> {
   const normalizedId = countryId.toLowerCase();
   const base = await fetchMissionBase(normalizedId);
-  const localCache = readCountryStudioCache(normalizedId);
+  const staticDefaults = getDefaultStudioRowsForCountry(normalizedId);
   if (!base) return null;
 
   if (!isSupabaseConfigured()) {
+    const localCache = readCountryStudioCache(normalizedId);
     const cachedVocab = mapVocabQuestionsToItems(localCache.vocabQuestions);
     const cachedListen = mapListeningQuestionsToItems(
       localCache.listeningQuestions
@@ -1495,49 +1619,39 @@ export async function fetchMissionByCountry(
         ? mapVocabQuestionsToItems(vocabQRows)
         : vocabLegacyRows.length > 0
           ? buildVocabularyItemsFromRows(vocabLegacyRows)
-          : mapVocabQuestionsToItems(localCache.vocabQuestions);
+          : base.vocabularyItems;
 
     const liveListening =
       listenQRows.length > 0
         ? mapListeningQuestionsToItems(listenQRows)
         : listenLegacyRows.length > 0
           ? buildListeningItemsFromRows(listenLegacyRows)
-          : mapListeningQuestionsToItems(localCache.listeningQuestions);
+          : base.listeningItems;
 
     const liveSentences =
       sentRRows.length > 0
         ? mapSentenceRoundsToItems(sentRRows)
-        : mapSentenceRoundsToItems(localCache.sentenceRounds);
+        : base.sentenceItems;
 
     const liveSpeakingTurns =
-      speakingRows.length > 0 ? speakingRows : localCache.speakingTurns;
+      speakingRows.length > 0 ? speakingRows : base.speakingTurns;
     const liveCircuitBoards =
-      circuitRows.length > 0 ? circuitRows : localCache.circuitBoards;
+      circuitRows.length > 0 ? circuitRows : base.circuitBoards;
     const liveTechRunnerQuestions =
-      techRunnerRows.length > 0
-        ? techRunnerRows
-        : localCache.techRunnerQuestions;
+      techRunnerRows.length > 0 ? techRunnerRows : base.techRunnerQuestions;
     const liveTargetSmasherItems =
-      targetSmasherRows.length > 0
-        ? targetSmasherRows
-        : localCache.targetSmasherItems;
+      targetSmasherRows.length > 0 ? targetSmasherRows : base.targetSmasherItems;
 
     const resolvedModuleConfig: CountryModuleConfig = modCfgRow
       ? {
           vocabularyEnabled: Boolean(modCfgRow.vocabulary_enabled),
           listeningEnabled: Boolean(modCfgRow.listening_enabled),
           speakingEnabled: Boolean(modCfgRow.speaking_enabled),
-          enabledGames: withUsaTargetSmasher(
-            base.countryId,
-            withUsaCircuitRepair(
-              base.countryId,
-              Array.isArray(modCfgRow.enabled_games)
-                ? modCfgRow.enabled_games
-                : localCache.moduleConfig.enabledGames
-            )
-          ),
+          enabledGames: Array.isArray(modCfgRow.enabled_games)
+            ? modCfgRow.enabled_games
+            : base.moduleConfig.enabledGames,
         }
-      : localCache.moduleConfig;
+      : base.moduleConfig || staticDefaults.moduleConfig;
 
     return {
       ...base,
@@ -1552,7 +1666,6 @@ export async function fetchMissionByCountry(
       targetSmasherItems: liveTargetSmasherItems,
       moduleConfig: resolvedModuleConfig,
       culturalBriefing:
-        localCache.culturalBriefing ||
         base.culturalBriefing ||
         getDefaultCulturalBriefingForCountry(normalizedId),
       gameAssignments: gameRows,

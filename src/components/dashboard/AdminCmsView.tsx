@@ -30,10 +30,8 @@ import { resetSubscription } from "@/lib/subscriptionStorage";
 import {
   getCircuitDefaultsForBoard,
   getDefaultCulturalBriefingForCountry,
-  readCountryStudioCache,
+  getDefaultStudioRowsForCountry,
   syncCountryMissionStagesData,
-  withUsaCircuitRepair,
-  withUsaTargetSmasher,
   type CountryCulturalBriefing,
   type CountryModuleConfig,
 } from "@/lib/progress";
@@ -68,6 +66,7 @@ import type {
   DbCountryVocabularyQuestion,
   DbEvent,
   DbLesson,
+  DbMission,
   DbVideo,
 } from "@/types/database";
 
@@ -1283,187 +1282,201 @@ function CountryStudio({
     string | null
   >(null);
 
-  // Hydrate initial rows from Supabase (auto-seeding USA defaults on first load)
+  // Hydrate initial rows strictly from Supabase (country_* tables + public.missions.stages_data)
   useEffect(() => {
     let alive = true;
     (async () => {
-      const fallbackCache = readCountryStudioCache(cid);
-      const seededKey = `wordwise_country_studio_seeded_${cid}_v4`;
-      const alreadySeeded =
-        typeof window !== "undefined" && Boolean(localStorage.getItem(seededKey));
-
+      const staticDefaults = getDefaultStudioRowsForCountry(cid);
       const supabase = createClient();
-      const [vqRes, lqRes, srRes, spRes, cbRes, trRes, tsRes, mcRes] = await Promise.all([
-        supabase
-          .from("country_vocabulary_questions")
-          .select("*")
-          .eq("country_id", cid)
-          .order("sort_order", { ascending: true }),
-        supabase
-          .from("country_listening_questions")
-          .select("*")
-          .eq("country_id", cid)
-          .order("sort_order", { ascending: true }),
-        supabase
-          .from("country_sentence_rounds")
-          .select("*")
-          .eq("country_id", cid)
-          .order("sort_order", { ascending: true }),
-        supabase
-          .from("country_speaking_turns")
-          .select("*")
-          .eq("country_id", cid)
-          .order("sort_order", { ascending: true }),
-        supabase
-          .from("country_circuit_boards")
-          .select("*")
-          .eq("country_id", cid)
-          .order("sort_order", { ascending: true }),
-        supabase
-          .from("country_tech_runner_questions")
-          .select("*")
-          .eq("country_id", cid)
-          .order("sort_order", { ascending: true }),
-        supabase
-          .from("country_target_smasher_items")
-          .select("*")
-          .eq("country_id", cid)
-          .order("sort_order", { ascending: true }),
-        supabase
-          .from("country_module_configs")
-          .select("*")
-          .eq("country_id", cid)
-          .maybeSingle<DbCountryModuleConfig>(),
-      ]);
+
+      const [vqRes, lqRes, srRes, spRes, cbRes, trRes, tsRes, mcRes, missionRes] =
+        await Promise.all([
+          supabase
+            .from("country_vocabulary_questions")
+            .select("*")
+            .eq("country_id", cid)
+            .order("sort_order", { ascending: true }),
+          supabase
+            .from("country_listening_questions")
+            .select("*")
+            .eq("country_id", cid)
+            .order("sort_order", { ascending: true }),
+          supabase
+            .from("country_sentence_rounds")
+            .select("*")
+            .eq("country_id", cid)
+            .order("sort_order", { ascending: true }),
+          supabase
+            .from("country_speaking_turns")
+            .select("*")
+            .eq("country_id", cid)
+            .order("sort_order", { ascending: true }),
+          supabase
+            .from("country_circuit_boards")
+            .select("*")
+            .eq("country_id", cid)
+            .order("sort_order", { ascending: true }),
+          supabase
+            .from("country_tech_runner_questions")
+            .select("*")
+            .eq("country_id", cid)
+            .order("sort_order", { ascending: true }),
+          supabase
+            .from("country_target_smasher_items")
+            .select("*")
+            .eq("country_id", cid)
+            .order("sort_order", { ascending: true }),
+          supabase
+            .from("country_module_configs")
+            .select("*")
+            .eq("country_id", cid)
+            .maybeSingle<DbCountryModuleConfig>(),
+          supabase
+            .from("missions")
+            .select("*")
+            .eq("country_id", cid)
+            .maybeSingle<DbMission>(),
+        ]);
 
       if (!alive) return;
 
-      let vRows = (vqRes.data || []) as DbCountryVocabularyQuestion[];
-      let lRows = (lqRes.data || []) as DbCountryListeningQuestion[];
-      let sRows = (srRes.data || []) as DbCountrySentenceRound[];
-      let spRows = (spRes.data || []) as DbCountrySpeakingTurn[];
-      let cbRows = (cbRes.data || []) as DbCountryCircuitBoard[];
-      let trRows = (trRes.data || []) as DbCountryTechRunnerQuestion[];
-      let tsRows = (tsRes.data || []) as DbCountryTargetSmasherItem[];
-      let mCfg: CountryModuleConfig = mcRes.data
+      const stagesData = missionRes.data?.stages_data;
+
+      const stagesVocabQuestions: DbCountryVocabularyQuestion[] =
+        Array.isArray(stagesData?.vocabQuestions) &&
+        stagesData.vocabQuestions.length > 0
+          ? stagesData.vocabQuestions
+          : Array.isArray(stagesData?.vocabularyItems) &&
+              stagesData.vocabularyItems.length > 0 &&
+              !stagesData.vocabularyItems.some((v) =>
+                /latte|barista/i.test(v.word || "")
+              )
+            ? stagesData.vocabularyItems.map((v, i) => ({
+                id: v.id,
+                country_id: cid,
+                word: v.word,
+                meaning: v.meaning,
+                question_text: v.question,
+                options: v.options,
+                correct_index: v.correctIndex,
+                sort_order: i + 1,
+              }))
+            : staticDefaults.vocabQuestions;
+
+      const stagesListeningQuestions: DbCountryListeningQuestion[] =
+        Array.isArray(stagesData?.listeningQuestions) &&
+        stagesData.listeningQuestions.length > 0
+          ? stagesData.listeningQuestions
+          : Array.isArray(stagesData?.listeningItems) &&
+              stagesData.listeningItems.length > 0 &&
+              !stagesData.listeningItems.some((l) =>
+                /latte|coffee/i.test(l.sentence || "")
+              )
+            ? stagesData.listeningItems.map((l, i) => ({
+                id: l.id,
+                country_id: cid,
+                title: l.scenario,
+                transcript: l.sentence,
+                question_text: l.question,
+                options: l.options,
+                correct_index: l.correctIndex,
+                sort_order: i + 1,
+              }))
+            : staticDefaults.listeningQuestions;
+
+      const stagesSentenceRounds: DbCountrySentenceRound[] =
+        Array.isArray(stagesData?.sentenceRounds) &&
+        stagesData.sentenceRounds.length > 0
+          ? stagesData.sentenceRounds
+          : Array.isArray(stagesData?.sentenceItems) &&
+              stagesData.sentenceItems.length > 0 &&
+              !stagesData.sentenceItems.some((s) =>
+                /latte|espresso/i.test(s.targetSentence || "")
+              )
+            ? stagesData.sentenceItems.map((s, i) => ({
+                id: s.id,
+                country_id: cid,
+                target_sentence: s.targetSentence,
+                word_chunks: s.words,
+                round_number: s.round || i + 1,
+                points: s.points || 20,
+                time_limit: s.timeLimit || 20,
+                sort_order: i + 1,
+              }))
+            : staticDefaults.sentenceRounds;
+
+      const vRows =
+        !vqRes.error && Array.isArray(vqRes.data) && vqRes.data.length > 0
+          ? (vqRes.data as DbCountryVocabularyQuestion[])
+          : stagesVocabQuestions;
+      const lRows =
+        !lqRes.error && Array.isArray(lqRes.data) && lqRes.data.length > 0
+          ? (lqRes.data as DbCountryListeningQuestion[])
+          : stagesListeningQuestions;
+      const sRows =
+        !srRes.error && Array.isArray(srRes.data) && srRes.data.length > 0
+          ? (srRes.data as DbCountrySentenceRound[])
+          : stagesSentenceRounds;
+      const spRows =
+        !spRes.error && Array.isArray(spRes.data) && spRes.data.length > 0
+          ? (spRes.data as DbCountrySpeakingTurn[])
+          : Array.isArray(stagesData?.speakingTurns) &&
+              stagesData.speakingTurns.length > 0
+            ? stagesData.speakingTurns
+            : staticDefaults.speakingTurns;
+      const cbRows =
+        !cbRes.error && Array.isArray(cbRes.data) && cbRes.data.length > 0
+          ? (cbRes.data as DbCountryCircuitBoard[])
+          : Array.isArray(stagesData?.circuitBoards) &&
+              stagesData.circuitBoards.length > 0
+            ? stagesData.circuitBoards
+            : staticDefaults.circuitBoards;
+      const trRows =
+        !trRes.error && Array.isArray(trRes.data) && trRes.data.length > 0
+          ? (trRes.data as DbCountryTechRunnerQuestion[])
+          : Array.isArray(stagesData?.techRunnerQuestions) &&
+              stagesData.techRunnerQuestions.length > 0
+            ? stagesData.techRunnerQuestions
+            : staticDefaults.techRunnerQuestions;
+      const tsRows =
+        !tsRes.error && Array.isArray(tsRes.data) && tsRes.data.length > 0
+          ? (tsRes.data as DbCountryTargetSmasherItem[])
+          : Array.isArray(stagesData?.targetSmasherItems) &&
+              stagesData.targetSmasherItems.length > 0
+            ? stagesData.targetSmasherItems
+            : staticDefaults.targetSmasherItems;
+
+      const mCfg: CountryModuleConfig = mcRes.data
         ? {
             vocabularyEnabled: Boolean(mcRes.data.vocabulary_enabled),
             listeningEnabled: Boolean(mcRes.data.listening_enabled),
             speakingEnabled: Boolean(mcRes.data.speaking_enabled),
             enabledGames: Array.isArray(mcRes.data.enabled_games)
               ? mcRes.data.enabled_games
-              : fallbackCache.moduleConfig.enabledGames,
+              : staticDefaults.moduleConfig.enabledGames,
           }
-        : fallbackCache.moduleConfig;
+        : stagesData?.moduleConfig
+          ? {
+              vocabularyEnabled: Boolean(
+                stagesData.moduleConfig.vocabularyEnabled
+              ),
+              listeningEnabled: Boolean(
+                stagesData.moduleConfig.listeningEnabled
+              ),
+              speakingEnabled: Boolean(stagesData.moduleConfig.speakingEnabled),
+              enabledGames: Array.isArray(stagesData.moduleConfig.enabledGames)
+                ? stagesData.moduleConfig.enabledGames
+                : staticDefaults.moduleConfig.enabledGames,
+            }
+          : staticDefaults.moduleConfig;
 
-      mCfg = {
-        ...mCfg,
-        enabledGames: withUsaTargetSmasher(
-          cid,
-          withUsaCircuitRepair(cid, mCfg.enabledGames)
-        ),
-      };
-
-      // Ensure USA has tech_runner enabled in local/initial view if not yet seeded
-      if (cid === "usa" && !alreadySeeded && !mCfg.enabledGames.includes("tech_runner")) {
-        mCfg = {
-          ...mCfg,
-          enabledGames: [...mCfg.enabledGames, "tech_runner"],
-        };
-      }
-
-      // If tables exist and are empty on first load, seed default country items
-      if (
-        !vqRes.error &&
-        !lqRes.error &&
-        !srRes.error &&
-        vRows.length === 0 &&
-        lRows.length === 0 &&
-        sRows.length === 0 &&
-        !alreadySeeded &&
-        (fallbackCache.vocabQuestions.length > 0 ||
-          fallbackCache.listeningQuestions.length > 0 ||
-          fallbackCache.sentenceRounds.length > 0)
-      ) {
-        if (typeof window !== "undefined") {
-          localStorage.setItem(seededKey, "1");
-        }
-        await Promise.all([
-          fallbackCache.vocabQuestions.length > 0
-            ? supabase
-                .from("country_vocabulary_questions")
-                .upsert(fallbackCache.vocabQuestions, { onConflict: "id" })
-            : Promise.resolve(),
-          fallbackCache.listeningQuestions.length > 0
-            ? supabase
-                .from("country_listening_questions")
-                .upsert(fallbackCache.listeningQuestions, { onConflict: "id" })
-            : Promise.resolve(),
-          fallbackCache.sentenceRounds.length > 0
-            ? supabase
-                .from("country_sentence_rounds")
-                .upsert(fallbackCache.sentenceRounds, { onConflict: "id" })
-            : Promise.resolve(),
-          fallbackCache.speakingTurns.length > 0
-            ? supabase
-                .from("country_speaking_turns")
-                .upsert(fallbackCache.speakingTurns, { onConflict: "id" })
-            : Promise.resolve(),
-          fallbackCache.circuitBoards.length > 0
-            ? supabase
-                .from("country_circuit_boards")
-                .upsert(fallbackCache.circuitBoards, { onConflict: "id" })
-            : Promise.resolve(),
-          fallbackCache.techRunnerQuestions.length > 0
-            ? supabase
-                .from("country_tech_runner_questions")
-                .upsert(fallbackCache.techRunnerQuestions, { onConflict: "id" })
-            : Promise.resolve(),
-        ]);
-        vRows = fallbackCache.vocabQuestions;
-        lRows = fallbackCache.listeningQuestions;
-        sRows = fallbackCache.sentenceRounds;
-        spRows = fallbackCache.speakingTurns;
-        cbRows = fallbackCache.circuitBoards;
-        trRows = fallbackCache.techRunnerQuestions;
-      } else {
-        if (vqRes.error) vRows = fallbackCache.vocabQuestions;
-        if (lqRes.error) lRows = fallbackCache.listeningQuestions;
-        if (srRes.error) sRows = fallbackCache.sentenceRounds;
-        if (spRes.error || (spRows.length === 0 && !alreadySeeded)) {
-          spRows = fallbackCache.speakingTurns;
-        }
-        if (cbRes.error || (cbRows.length === 0 && !alreadySeeded)) {
-          cbRows = fallbackCache.circuitBoards;
-        }
-        if (trRes.error || (trRows.length === 0 && !alreadySeeded)) {
-          trRows = fallbackCache.techRunnerQuestions;
-          if (!trRes.error && trRows.length > 0) {
-            await supabase
-              .from("country_tech_runner_questions")
-              .upsert(trRows, { onConflict: "id" });
-          }
-        }
-      }
-
-      // Target Smasher items: seed defaults once per country (own seeded key)
-      const tsSeededKey = `wordwise_country_ts_seeded_${cid}_v1`;
-      const tsSeeded =
-        typeof window !== "undefined" &&
-        Boolean(localStorage.getItem(tsSeededKey));
-      if (tsRes.error) {
-        tsRows = fallbackCache.targetSmasherItems;
-      } else if (tsRows.length === 0 && !tsSeeded) {
-        tsRows = fallbackCache.targetSmasherItems;
-        if (typeof window !== "undefined") {
-          localStorage.setItem(tsSeededKey, "1");
-        }
-        if (tsRows.length > 0) {
-          await supabase
-            .from("country_target_smasher_items")
-            .upsert(tsRows, { onConflict: "id" });
-        }
-      }
+      const resolvedCultural: CountryCulturalBriefing =
+        stagesData?.culturalBriefing &&
+        typeof stagesData.culturalBriefing.communicationStyle === "string" &&
+        !/barista|latte/i.test(stagesData.culturalBriefing.communicationStyle)
+          ? stagesData.culturalBriefing
+          : staticDefaults.culturalBriefing ||
+            getDefaultCulturalBriefingForCountry(cid);
 
       setVocabQuestions(vRows);
       setListeningQuestions(lRows);
@@ -1473,10 +1486,7 @@ function CountryStudio({
       setTechRunnerQuestions(trRows);
       setTargetSmasherItems(tsRows);
       setModuleConfig(mCfg);
-      setCulturalBriefing(
-        fallbackCache.culturalBriefing ||
-          getDefaultCulturalBriefingForCountry(cid)
-      );
+      setCulturalBriefing(resolvedCultural);
       setSForm(emptySentenceRoundForm(sRows.length + 1));
       setCbForm(emptyCircuitBoardForm(cbRows.length + 1));
       setLoading(false);
@@ -1496,11 +1506,8 @@ function CountryStudio({
     nextTechRunner: DbCountryTechRunnerQuestion[] = techRunnerQuestions,
     nextTargetSmasher: DbCountryTargetSmasherItem[] = targetSmasherItems,
     nextCultural: CountryCulturalBriefing = culturalBriefing
-  ) {
-    if (typeof window !== "undefined") {
-      localStorage.setItem(`wordwise_country_studio_seeded_${cid}_v4`, "1");
-    }
-    await syncCountryMissionStagesData(cid, {
+  ): Promise<boolean> {
+    const { error } = await syncCountryMissionStagesData(cid, {
       vocabQuestions: nextVocab,
       listeningQuestions: nextListen,
       sentenceRounds: nextSentences,
@@ -1511,18 +1518,25 @@ function CountryStudio({
       moduleConfig: nextModConfig,
       culturalBriefing: nextCultural,
     });
+    if (error) {
+      flash(`Supabase write failed: ${error}`, false);
+      return false;
+    }
+    return true;
   }
 
   async function handleToggleModuleConfig(nextCfg: CountryModuleConfig) {
     setModuleConfig(nextCfg);
-    await persistAllSync(
+    const ok = await persistAllSync(
       vocabQuestions,
       listeningQuestions,
       sentenceRounds,
       speakingTurns,
       nextCfg
     );
-    flash(`Updated active modules & games for ${country.name}.`);
+    if (ok) {
+      flash(`Updated active modules & games for ${country.name} in Supabase.`);
+    }
   }
 
   function toggleGameInConfig(gameId: CountryGameType) {
@@ -4120,6 +4134,45 @@ export default function AdminCmsView() {
     return () => clearTimeout(t);
   }, [notice]);
 
+  const upsertVideosWithFallback = useCallback(
+    async (rows: DbVideo[]): Promise<{ data: DbVideo[] | null; error: string | null }> => {
+      const supabase = createClient();
+      const { data, error } = await supabase
+        .from("videos")
+        .upsert(rows, { onConflict: "id" })
+        .select();
+
+      if (!error) {
+        return { data: (data || []) as DbVideo[], error: null };
+      }
+
+      // If the 4 language-immersion columns haven't been added via ALTER TABLE yet, retry with core columns
+      if (/level|domain|transcript_notes|quiz_questions/i.test(error.message)) {
+        const coreRows = rows.map((r) => ({
+          id: r.id,
+          title: r.title,
+          description: r.description,
+          youtube_url: r.youtube_url,
+          duration_label: r.duration_label,
+          category: r.category,
+          sort_order: r.sort_order,
+          is_published: r.is_published,
+        }));
+        const fallbackRes = await supabase
+          .from("videos")
+          .upsert(coreRows, { onConflict: "id" })
+          .select();
+        if (fallbackRes.error) {
+          return { data: null, error: fallbackRes.error.message };
+        }
+        return { data: (fallbackRes.data || []) as DbVideo[], error: null };
+      }
+
+      return { data: null, error: error.message };
+    },
+    []
+  );
+
   const fetchVideos = useCallback(async () => {
     const supabase = createClient();
     const { data, error } = await supabase
@@ -4127,34 +4180,32 @@ export default function AdminCmsView() {
       .select("*")
       .order("sort_order", { ascending: true });
 
-    if (!error && Array.isArray(data)) {
-      if (
-        data.length === 0 &&
-        typeof window !== "undefined" &&
-        !localStorage.getItem(VIDEOS_SEEDED_KEY)
-      ) {
-        const seedRows = getLocalVideosStore();
-        localStorage.setItem(VIDEOS_SEEDED_KEY, "1");
-        const { error: seedErr } = await supabase
-          .from("videos")
-          .upsert(seedRows, { onConflict: "id" });
-        if (!seedErr) {
-          setVideos(seedRows);
-          saveLocalVideosStore(seedRows);
-          return;
-        }
-      }
-      if (data.length > 0 || localStorage.getItem(VIDEOS_SEEDED_KEY)) {
-        const rows = (data as DbVideo[]).map(normalizeVideo);
-        setVideos(rows);
-        saveLocalVideosStore(rows);
-        return;
-      }
+    if (error) {
+      flash(`Could not load videos from Supabase: ${error.message}`, false);
+      setVideos(DEFAULT_STEM_VIDEOS);
+      return;
     }
 
-    // Fallback to local store (seeded with the 3 default TED-Ed videos)
-    setVideos(getLocalVideosStore());
-  }, []);
+    if (Array.isArray(data)) {
+      if (data.length === 0) {
+        const { data: seededData } = await upsertVideosWithFallback(
+          DEFAULT_STEM_VIDEOS
+        );
+        const rows = (
+          seededData && seededData.length > 0
+            ? seededData
+            : DEFAULT_STEM_VIDEOS
+        ).map(normalizeVideo);
+        setVideos(rows);
+        return;
+      }
+      const rows = (data as DbVideo[]).map(normalizeVideo);
+      setVideos(rows);
+      return;
+    }
+
+    setVideos(DEFAULT_STEM_VIDEOS);
+  }, [flash, upsertVideosWithFallback]);
 
   const loadAll = useCallback(async () => {
     const supabase = createClient();
@@ -4200,16 +4251,26 @@ export default function AdminCmsView() {
   async function handleToggleLessonPublished(lesson: DbLesson) {
     setBusy(true);
     const supabase = createClient();
-    const { error } = await supabase
+    const nextPublished = !lesson.is_published;
+    const { data, error } = await supabase
       .from("lessons")
-      .update({ is_published: !lesson.is_published })
-      .eq("id", lesson.id);
-    flash(
-      error
-        ? `Update failed: ${error.message}`
-        : `"${lesson.title}" ${!lesson.is_published ? "published" : "unpublished"}.`,
-      !error
-    );
+      .update({ is_published: nextPublished })
+      .eq("id", lesson.id)
+      .select();
+
+    if (error || !data || data.length === 0) {
+      flash(
+        error
+          ? `Supabase update failed: ${error.message}`
+          : "Supabase RLS blocked updating this lesson (0 rows updated). Please run the Admin RLS policy SQL in Supabase SQL Editor.",
+        false
+      );
+    } else {
+      flash(
+        `"${lesson.title}" ${nextPublished ? "published" : "unpublished"} in Supabase.`
+      );
+      window.dispatchEvent(new CustomEvent("wordwise_curriculum_updated"));
+    }
     await loadAll();
     setBusy(false);
   }
@@ -4218,8 +4279,23 @@ export default function AdminCmsView() {
     if (!window.confirm(`Delete "${lesson.title}"?`)) return;
     setBusy(true);
     const supabase = createClient();
-    const { error } = await supabase.from("lessons").delete().eq("id", lesson.id);
-    flash(error ? `Delete failed: ${error.message}` : "Lesson deleted.", !error);
+    const { data, error } = await supabase
+      .from("lessons")
+      .delete()
+      .eq("id", lesson.id)
+      .select();
+
+    if (error || !data || data.length === 0) {
+      flash(
+        error
+          ? `Supabase delete failed: ${error.message}`
+          : "Supabase RLS blocked deleting this lesson (0 rows deleted). Please run the Admin RLS policy SQL in Supabase SQL Editor.",
+        false
+      );
+    } else {
+      flash("Lesson deleted from Supabase.");
+      window.dispatchEvent(new CustomEvent("wordwise_curriculum_updated"));
+    }
     await loadAll();
     setBusy(false);
   }
@@ -4229,7 +4305,6 @@ export default function AdminCmsView() {
     if (!vTitle.trim()) return flash("Video title is required.", false);
     if (!vUrl.trim()) return flash("YouTube URL is required.", false);
     setBusy(true);
-    const supabase = createClient();
     const maxOrder = videos.reduce((m, x) => Math.max(m, x.sort_order || 0), 0);
     const newVideo: DbVideo = {
       id: `video-custom-${slugify(vTitle) || "item"}-${Date.now().toString(36)}`,
@@ -4247,13 +4322,20 @@ export default function AdminCmsView() {
       quiz_questions: [],
     };
 
-    const nextList = [...videos, newVideo];
-    setVideos(nextList);
-    saveLocalVideosStore(nextList);
+    const { data, error } = await upsertVideosWithFallback([newVideo]);
 
-    await supabase.from("videos").upsert(newVideo, { onConflict: "id" });
+    if (error || !data || data.length === 0) {
+      flash(
+        error
+          ? `Supabase insert failed: ${error}`
+          : "Supabase RLS blocked adding this video (0 rows written). Please run the Admin RLS policy SQL in Supabase SQL Editor.",
+        false
+      );
+      setBusy(false);
+      return;
+    }
 
-    flash(`Video "${vTitle.trim()}" added.`);
+    flash(`Video "${vTitle.trim()}" saved to Supabase.`);
     setVTitle("");
     setVDesc("");
     setVUrl("");
@@ -4288,7 +4370,6 @@ export default function AdminCmsView() {
     if (!editVTitle.trim()) return flash("Video title is required.", false);
     if (!editVUrl.trim()) return flash("YouTube URL is required.", false);
     setBusy(true);
-    const supabase = createClient();
     const cleanNotes = editVNotes
       .map((n) => ({
         term: n.term.trim(),
@@ -4310,28 +4391,37 @@ export default function AdminCmsView() {
           q.correctIndex >= 0 &&
           q.correctIndex < q.options.length
       );
-    const updatedFields = {
+    const existingVideo = videos.find((v) => v.id === videoId);
+    const updatedRow: DbVideo = {
+      id: videoId,
       title: editVTitle.trim(),
       description: editVDesc.trim(),
       youtube_url: editVUrl.trim(),
       duration_label: editVDuration.trim() || "10 mins",
       category: editVCategory.trim() || "STEM",
+      sort_order: existingVideo?.sort_order || 1,
       is_published: editVPublished,
+      created_at: existingVideo?.created_at || new Date().toISOString(),
       level: editVLevel,
       domain: editVDomain,
       transcript_notes: cleanNotes,
       quiz_questions: cleanQuiz,
     };
 
-    const nextList = videos.map((v) =>
-      v.id === videoId ? { ...v, ...updatedFields } : v
-    );
-    setVideos(nextList);
-    saveLocalVideosStore(nextList);
+    const { data, error } = await upsertVideosWithFallback([updatedRow]);
 
-    await supabase.from("videos").update(updatedFields).eq("id", videoId);
+    if (error || !data || data.length === 0) {
+      flash(
+        error
+          ? `Supabase update failed: ${error}`
+          : "Supabase RLS blocked updating this video (0 rows updated). Please run the Admin RLS policy SQL in Supabase SQL Editor.",
+        false
+      );
+      setBusy(false);
+      return;
+    }
 
-    flash("Video updated.");
+    flash("Video saved to Supabase.");
     setEditingVideoId(null);
     window.dispatchEvent(new CustomEvent("wordwise_videos_updated"));
     await fetchVideos();
@@ -4340,20 +4430,28 @@ export default function AdminCmsView() {
 
   async function handleToggleVideoPublished(v: DbVideo) {
     setBusy(true);
-    const supabase = createClient();
     const nextPublished = !v.is_published;
-    const nextList = videos.map((item) =>
-      item.id === v.id ? { ...item, is_published: nextPublished } : item
+    const updatedRow: DbVideo = {
+      ...v,
+      is_published: nextPublished,
+    };
+
+    const { data, error } = await upsertVideosWithFallback([updatedRow]);
+
+    if (error || !data || data.length === 0) {
+      flash(
+        error
+          ? `Supabase update failed: ${error}`
+          : "Supabase RLS blocked updating this video (0 rows updated). Please run the Admin RLS policy SQL in Supabase SQL Editor.",
+        false
+      );
+      setBusy(false);
+      return;
+    }
+
+    flash(
+      `"${v.title}" ${nextPublished ? "published" : "unpublished"} in Supabase.`
     );
-    setVideos(nextList);
-    saveLocalVideosStore(nextList);
-
-    await supabase
-      .from("videos")
-      .update({ is_published: nextPublished })
-      .eq("id", v.id);
-
-    flash(`"${v.title}" ${nextPublished ? "published" : "unpublished"}.`);
     window.dispatchEvent(new CustomEvent("wordwise_videos_updated"));
     await fetchVideos();
     setBusy(false);
@@ -4362,17 +4460,25 @@ export default function AdminCmsView() {
   async function handleDeleteVideo(v: DbVideo) {
     if (!window.confirm(`Delete "${v.title}"?`)) return;
     setBusy(true);
-    if (typeof window !== "undefined") {
-      localStorage.setItem(VIDEOS_SEEDED_KEY, "1");
-    }
-    const nextList = videos.filter((item) => item.id !== v.id);
-    setVideos(nextList);
-    saveLocalVideosStore(nextList);
-
     const supabase = createClient();
-    await supabase.from("videos").delete().eq("id", v.id);
+    const { data, error } = await supabase
+      .from("videos")
+      .delete()
+      .eq("id", v.id)
+      .select();
 
-    flash("Video deleted.");
+    if (error || !data || data.length === 0) {
+      flash(
+        error
+          ? `Supabase delete failed: ${error.message}`
+          : "Supabase RLS blocked deleting this video (0 rows deleted). Please run the Admin RLS policy SQL in Supabase SQL Editor.",
+        false
+      );
+      setBusy(false);
+      return;
+    }
+
+    flash("Video deleted from Supabase.");
     window.dispatchEvent(new CustomEvent("wordwise_videos_updated"));
     await fetchVideos();
     setBusy(false);
@@ -4381,16 +4487,24 @@ export default function AdminCmsView() {
   async function handleToggleCountry(country: DbCountry) {
     setBusy(true);
     const supabase = createClient();
-    const { error } = await supabase
+    const { data, error } = await supabase
       .from("countries")
       .update({ unlocked: !country.unlocked })
-      .eq("id", country.id);
-    flash(
-      error
-        ? `Update failed: ${error.message}`
-        : `${country.name} ${!country.unlocked ? "unlocked" : "locked"}.`,
-      !error
-    );
+      .eq("id", country.id)
+      .select();
+
+    if (error || !data || data.length === 0) {
+      flash(
+        error
+          ? `Supabase update failed: ${error.message}`
+          : "Supabase RLS blocked updating this country (0 rows updated). Please run the Admin RLS policy SQL in Supabase SQL Editor.",
+        false
+      );
+    } else {
+      flash(
+        `${country.name} ${!country.unlocked ? "unlocked" : "locked"} in Supabase.`
+      );
+    }
     await loadAll();
     setBusy(false);
   }
@@ -4420,23 +4534,35 @@ export default function AdminCmsView() {
       sort_order: maxOrder + 1,
     };
 
-    let { error } = await supabase.from("events").insert({
-      ...basePayload,
-      format_label: baseFormat,
-      is_published: ePublished,
-    });
+    let { data, error } = await supabase
+      .from("events")
+      .insert({
+        ...basePayload,
+        format_label: baseFormat,
+        is_published: ePublished,
+      })
+      .select();
 
     if (error && /is_published/i.test(error.message)) {
-      const fallbackRes = await supabase.from("events").insert(basePayload);
+      const fallbackRes = await supabase
+        .from("events")
+        .insert(basePayload)
+        .select();
+      data = fallbackRes.data;
       error = fallbackRes.error;
     }
 
-    if (error) {
-      flash(`Insert failed: ${error.message}`, false);
+    if (error || !data || data.length === 0) {
+      flash(
+        error
+          ? `Supabase insert failed: ${error.message}`
+          : "Supabase RLS blocked adding this event (0 rows written). Please run the Admin RLS policy SQL in Supabase SQL Editor.",
+        false
+      );
     } else {
       setLocalEventPublishedState(newId, ePublished);
       flash(
-        `Event "${eTitle.trim()}" ${ePublished ? "published" : "saved as unpublished"}.`
+        `Event "${eTitle.trim()}" ${ePublished ? "published" : "saved as unpublished"} in Supabase.`
       );
       setETitle("");
       setEDate("");
@@ -4483,28 +4609,36 @@ export default function AdminCmsView() {
         : `[UNPUBLISHED] ${baseFormat}`,
     };
 
-    let { error } = await supabase
+    let { data, error } = await supabase
       .from("events")
       .update({
         ...baseUpdate,
         format_label: baseFormat,
         is_published: editEPublished,
       })
-      .eq("id", eventId);
+      .eq("id", eventId)
+      .select();
 
     if (error && /is_published/i.test(error.message)) {
       const fallbackRes = await supabase
         .from("events")
         .update(baseUpdate)
-        .eq("id", eventId);
+        .eq("id", eventId)
+        .select();
+      data = fallbackRes.data;
       error = fallbackRes.error;
     }
 
-    if (error) {
-      flash(`Update failed: ${error.message}`, false);
+    if (error || !data || data.length === 0) {
+      flash(
+        error
+          ? `Supabase update failed: ${error.message}`
+          : "Supabase RLS blocked updating this event (0 rows updated). Please run the Admin RLS policy SQL in Supabase SQL Editor.",
+        false
+      );
     } else {
       setLocalEventPublishedState(eventId, editEPublished);
-      flash("Event updated.");
+      flash("Event updated in Supabase.");
       setEditingEventId(null);
       await loadAll();
     }
@@ -4522,29 +4656,14 @@ export default function AdminCmsView() {
         ? "Self-Paced Challenge"
         : "Community Meetup");
 
-    // Optimistic UI update
-    setEvents((prev) =>
-      prev.map((item) =>
-        item.id === ev.id
-          ? {
-              ...item,
-              is_published: nextPublished,
-              format_label: nextPublished
-                ? cleanFormat
-                : `[UNPUBLISHED] ${cleanFormat}`,
-            }
-          : item
-      )
-    );
-    setLocalEventPublishedState(ev.id, nextPublished);
-
-    let { error } = await supabase
+    let { data, error } = await supabase
       .from("events")
       .update({
         is_published: nextPublished,
         format_label: cleanFormat,
       })
-      .eq("id", ev.id);
+      .eq("id", ev.id)
+      .select();
 
     if (error && /is_published/i.test(error.message)) {
       const fallbackRes = await supabase
@@ -4554,16 +4673,25 @@ export default function AdminCmsView() {
             ? cleanFormat
             : `[UNPUBLISHED] ${cleanFormat}`,
         })
-        .eq("id", ev.id);
+        .eq("id", ev.id)
+        .select();
+      data = fallbackRes.data;
       error = fallbackRes.error;
     }
 
-    flash(
-      error
-        ? `Update failed: ${error.message}`
-        : `"${ev.title}" ${nextPublished ? "published" : "unpublished"}.`,
-      !error
-    );
+    if (error || !data || data.length === 0) {
+      flash(
+        error
+          ? `Supabase update failed: ${error.message}`
+          : "Supabase RLS blocked updating this event (0 rows updated). Please run the Admin RLS policy SQL in Supabase SQL Editor.",
+        false
+      );
+    } else {
+      setLocalEventPublishedState(ev.id, nextPublished);
+      flash(
+        `"${ev.title}" ${nextPublished ? "published" : "unpublished"} in Supabase.`
+      );
+    }
     await loadAll();
     setBusy(false);
   }
@@ -4572,8 +4700,22 @@ export default function AdminCmsView() {
     if (!window.confirm(`Delete "${ev.title}"?`)) return;
     setBusy(true);
     const supabase = createClient();
-    const { error } = await supabase.from("events").delete().eq("id", ev.id);
-    flash(error ? `Delete failed: ${error.message}` : "Event deleted.", !error);
+    const { data, error } = await supabase
+      .from("events")
+      .delete()
+      .eq("id", ev.id)
+      .select();
+
+    if (error || !data || data.length === 0) {
+      flash(
+        error
+          ? `Supabase delete failed: ${error.message}`
+          : "Supabase RLS blocked deleting this event (0 rows deleted). Please run the Admin RLS policy SQL in Supabase SQL Editor.",
+        false
+      );
+    } else {
+      flash("Event deleted from Supabase.");
+    }
     await loadAll();
     setBusy(false);
   }

@@ -62,7 +62,7 @@ export function isDbEventPublished(row: DbEvent): boolean {
   ) {
     return false;
   }
-  if (getLocalUnpublishedEventIds().includes(row.id)) {
+  if (!isSupabaseConfigured() && getLocalUnpublishedEventIds().includes(row.id)) {
     return false;
   }
   return true;

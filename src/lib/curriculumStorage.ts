@@ -323,10 +323,16 @@ export async function saveFullLessonToSupabase(
   };
   if (input.id === null) lessonRow.sort_order = sortOrder;
 
-  const { error: lErr } = await supabase
+  const { data: savedLessons, error: lErr } = await supabase
     .from("lessons")
-    .upsert(lessonRow, { onConflict: "id" });
+    .upsert(lessonRow, { onConflict: "id" })
+    .select();
   if (lErr) throw new Error(`Lesson save failed: ${lErr.message}`);
+  if (!savedLessons || savedLessons.length === 0) {
+    throw new Error(
+      "Supabase RLS blocked saving this lesson (0 rows written). Please run the Admin RLS policy SQL in Supabase SQL Editor."
+    );
+  }
 
   const { error: dfErr } = await supabase
     .from("flashcards")
@@ -425,7 +431,6 @@ export async function fetchCurriculumLessons(): Promise<Lesson[]> {
       supabase
         .from("lessons")
         .select("*")
-        .eq("is_published", true)
         .order("sort_order", { ascending: true }),
       supabase
         .from("flashcards")
@@ -437,10 +442,12 @@ export async function fetchCurriculumLessons(): Promise<Lesson[]> {
         .order("sort_order", { ascending: true }),
     ]);
 
-    const dbLessons = (lessonsRes.data || []) as DbLesson[];
-    if (lessonsRes.error || dbLessons.length === 0) {
-      return cachedLessons || renewableEnergyLessons;
+    const allDbLessons = (lessonsRes.data || []) as DbLesson[];
+    if (lessonsRes.error || allDbLessons.length === 0) {
+      return renewableEnergyLessons;
     }
+
+    const dbLessons = allDbLessons.filter((row) => row.is_published !== false);
 
     const dbFlashcards = ((flashcardsRes.data || []) as DbFlashcard[]);
     const dbQuestions = ((questionsRes.data || []) as DbLessonQuestion[]);

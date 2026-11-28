@@ -86,38 +86,23 @@ export default function LearningLibraryView({
   );
 
   const loadVideos = useCallback(async () => {
-    const getLocalPublished = (): DbVideo[] => {
-      if (typeof window === "undefined") return DEFAULT_FALLBACK_VIDEOS;
-      try {
-        const raw = localStorage.getItem("wordwise_videos_store_v1");
-        if (raw) {
-          const parsed = JSON.parse(raw);
-          if (Array.isArray(parsed)) {
-            return (parsed as DbVideo[])
-              .filter((v) => v.is_published !== false)
-              .map(normalizeVideo);
-          }
-        }
-      } catch {
-        // ignore
-      }
-      return DEFAULT_FALLBACK_VIDEOS;
-    };
-
     try {
       const supabase = createClient();
       const { data, error } = await supabase
         .from("videos")
         .select("*")
-        .eq("is_published", true)
         .order("sort_order", { ascending: true });
       if (!error && Array.isArray(data) && data.length > 0) {
-        setVideos((data as DbVideo[]).map(normalizeVideo));
+        setVideos(
+          (data as DbVideo[])
+            .filter((v) => v.is_published !== false)
+            .map(normalizeVideo)
+        );
       } else {
-        setVideos(getLocalPublished());
+        setVideos(DEFAULT_FALLBACK_VIDEOS);
       }
     } catch {
-      setVideos(getLocalPublished());
+      setVideos(DEFAULT_FALLBACK_VIDEOS);
     }
   }, []);
 

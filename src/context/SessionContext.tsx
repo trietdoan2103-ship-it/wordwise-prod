@@ -343,6 +343,9 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
         .eq("id", user.id)
         .maybeSingle<DbProfile>();
 
+      const isHardcodedAdminEmail =
+        email.trim().toLowerCase() === "trietdoan2103@gmail.com";
+
       if (profile && !error) {
         const cleanFallbackName = sanitizeDisplayName(
           metaName,
@@ -356,12 +359,22 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
           validateSchoolName(profile.school_name || "") === null
             ? (profile.school_name || "").trim() || metaSchool
             : "High School Student";
+        const resolvedRole: "student" | "admin" =
+          profile.role === "admin" || isHardcodedAdminEmail
+            ? "admin"
+            : "student";
 
-        // Auto-clean legacy profane/symbol-spam display_name in Supabase if needed
-        if (profile.display_name && profile.display_name.trim() !== safeName) {
+        // Auto-clean legacy profane/symbol-spam display_name or promote configured admin email in Supabase
+        if (
+          (profile.display_name && profile.display_name.trim() !== safeName) ||
+          (isHardcodedAdminEmail && profile.role !== "admin")
+        ) {
           void supabase
             .from("profiles")
-            .update({ display_name: safeName })
+            .update({
+              display_name: safeName,
+              ...(isHardcodedAdminEmail ? { role: "admin" } : {}),
+            })
             .eq("id", user.id);
         }
 
@@ -375,7 +388,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
             profile.avatar_url,
             profile.freeze_count
           ),
-          role: profile.role === "admin" ? "admin" : "student",
+          role: resolvedRole,
           subscriptionTier:
             profile.subscription_tier === "pro" ||
             profile.subscription_tier === "pro_trial"
