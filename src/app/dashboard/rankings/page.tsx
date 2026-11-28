@@ -1,16 +1,18 @@
-"use client";
-
+import { unstable_noStore as noStore } from "next/cache";
 import ProtectedRoute from "@/components/auth/ProtectedRoute";
 import RankingsView from "@/components/dashboard/RankingsView";
 
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 /**
- * Community Rankings & Leaderboard — Milestone P4.2.
+ * Community Rankings & Leaderboard — Live Supabase Single Source of Truth.
  *
- * Transparent demo leaderboard showcasing high-school STEM English competitive rankings
- * across specialized schools (THPT Chuyên), Top 3 podium, and user's pinned position.
- * Protected route: requires active demo session.
+ * Static caching disabled (`force-dynamic` + `noStore()`) so Vercel always
+ * serves fresh real-time rankings across all devices and accounts.
  */
 export default function DashboardRankingsPage() {
+  noStore();
   return (
     <ProtectedRoute>
       <RankingsView />

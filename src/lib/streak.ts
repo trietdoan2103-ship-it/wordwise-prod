@@ -144,14 +144,18 @@ export async function fetchUserStreak(): Promise<StreakData> {
       return fallback;
     }
 
+    const rawFreeze =
+      typeof data.freeze_count === "number" ? data.freeze_count : 1;
+    const actualFreeze =
+      rawFreeze >= 100 ? Math.max(0, rawFreeze % 100) : Math.max(0, rawFreeze);
+
     const fetched: StreakData = {
       currentStreak:
         typeof data.current_streak === "number"
           ? Math.max(0, data.current_streak)
           : 1,
       lastActiveDate: data.last_active_date || getTodayDateString(),
-      freezeCount:
-        typeof data.freeze_count === "number" ? data.freeze_count : 1,
+      freezeCount: actualFreeze,
     };
 
     saveStreak(fetched);
@@ -202,12 +206,26 @@ export function recordStreakAction(): StreakData {
         } = await supabase.auth.getUser();
         if (!user) return;
 
+        const { data: existingProf } = await supabase
+          .from("profiles")
+          .select("freeze_count")
+          .eq("id", user.id)
+          .maybeSingle<{ freeze_count: number | null }>();
+
+        const existingRaw =
+          typeof existingProf?.freeze_count === "number"
+            ? existingProf.freeze_count
+            : 1;
+        const upperCarrier =
+          existingRaw >= 100 ? Math.floor(existingRaw / 100) * 100 : 0;
+        const preservedFreeze = upperCarrier + (updated.freezeCount % 100);
+
         await supabase
           .from("profiles")
           .update({
             current_streak: updated.currentStreak,
             last_active_date: updated.lastActiveDate,
-            freeze_count: updated.freezeCount,
+            freeze_count: preservedFreeze,
           })
           .eq("id", user.id);
 

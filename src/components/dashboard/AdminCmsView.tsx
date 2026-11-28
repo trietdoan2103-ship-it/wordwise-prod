@@ -20,7 +20,12 @@ import {
 } from "@/lib/curriculumStorage";
 import { resetStreak } from "@/lib/streak";
 import { clearStoredUnlockTimestamps } from "@/lib/achievements";
-import { clearRegisteredEvents } from "@/lib/eventsStorage";
+import {
+  cleanEventFormatLabel,
+  clearRegisteredEvents,
+  isDbEventPublished,
+  setLocalEventPublishedState,
+} from "@/lib/eventsStorage";
 import { resetSubscription } from "@/lib/subscriptionStorage";
 import {
   getCircuitDefaultsForBoard,
@@ -4083,6 +4088,7 @@ export default function AdminCmsView() {
   const [eLocation, setELocation] = useState("");
   const [eDesc, setEDesc] = useState("");
   const [eRewards, setERewards] = useState("");
+  const [ePublished, setEPublished] = useState(true);
 
   // Event inline edit state
   const [editingEventId, setEditingEventId] = useState<string | null>(null);
@@ -4093,6 +4099,7 @@ export default function AdminCmsView() {
   const [editELocation, setEditELocation] = useState("");
   const [editERewards, setEditERewards] = useState("");
   const [editECategory, setEditECategory] = useState<"meetup" | "challenge">("meetup");
+  const [editEPublished, setEditEPublished] = useState(true);
 
   const isAdmin = session?.role === "admin";
   const displayName = session?.displayName || "Explorer";
@@ -4394,12 +4401,15 @@ export default function AdminCmsView() {
     setBusy(true);
     const supabase = createClient();
     const maxOrder = events.reduce((m, x) => Math.max(m, x.sort_order || 0), 0);
-    const { error } = await supabase.from("events").insert({
-      id: `event-custom-${slugify(eTitle) || "item"}-${Date.now().toString(36)}`,
+    const newId = `event-custom-${slugify(eTitle) || "item"}-${Date.now().toString(36)}`;
+    const baseFormat =
+      eCategory === "challenge" ? "Self-Paced Challenge" : "Community Meetup";
+    const basePayload = {
+      id: newId,
       title: eTitle.trim(),
       subtitle: "",
       category: eCategory,
-      format_label: eCategory === "challenge" ? "Self-Paced Challenge" : "Community Meetup",
+      format_label: ePublished ? baseFormat : `[UNPUBLISHED] ${baseFormat}`,
       date_label: eDate.trim(),
       time_label: eTime.trim(),
       location: eLocation.trim(),
@@ -4408,17 +4418,33 @@ export default function AdminCmsView() {
       rewards: eRewards.trim(),
       base_registered_count: 0,
       sort_order: maxOrder + 1,
+    };
+
+    let { error } = await supabase.from("events").insert({
+      ...basePayload,
+      format_label: baseFormat,
+      is_published: ePublished,
     });
+
+    if (error && /is_published/i.test(error.message)) {
+      const fallbackRes = await supabase.from("events").insert(basePayload);
+      error = fallbackRes.error;
+    }
+
     if (error) {
       flash(`Insert failed: ${error.message}`, false);
     } else {
-      flash(`Event "${eTitle.trim()}" added.`);
+      setLocalEventPublishedState(newId, ePublished);
+      flash(
+        `Event "${eTitle.trim()}" ${ePublished ? "published" : "saved as unpublished"}.`
+      );
       setETitle("");
       setEDate("");
       setETime("");
       setELocation("");
       setEDesc("");
       setERewards("");
+      setEPublished(true);
       await loadAll();
     }
     setBusy(false);
@@ -4433,34 +4459,112 @@ export default function AdminCmsView() {
     setEditELocation(ev.location || "");
     setEditERewards(ev.rewards || "");
     setEditECategory((ev.category as "meetup" | "challenge") || "meetup");
+    setEditEPublished(isDbEventPublished(ev));
   }
 
   async function handleSaveEvent(eventId: string) {
     if (!editETitle.trim()) return flash("Event title is required.", false);
     setBusy(true);
     const supabase = createClient();
-    const { error } = await supabase
+    const baseFormat =
+      editECategory === "challenge"
+        ? "Self-Paced Challenge"
+        : "Community Meetup";
+    const baseUpdate = {
+      title: editETitle.trim(),
+      description: editEDesc.trim(),
+      date_label: editEDate.trim(),
+      time_label: editETime.trim(),
+      location: editELocation.trim(),
+      rewards: editERewards.trim(),
+      category: editECategory,
+      format_label: editEPublished
+        ? baseFormat
+        : `[UNPUBLISHED] ${baseFormat}`,
+    };
+
+    let { error } = await supabase
       .from("events")
       .update({
-        title: editETitle.trim(),
-        description: editEDesc.trim(),
-        date_label: editEDate.trim(),
-        time_label: editETime.trim(),
-        location: editELocation.trim(),
-        rewards: editERewards.trim(),
-        category: editECategory,
-        format_label:
-          editECategory === "challenge" ? "Self-Paced Challenge" : "Community Meetup",
+        ...baseUpdate,
+        format_label: baseFormat,
+        is_published: editEPublished,
       })
       .eq("id", eventId);
+
+    if (error && /is_published/i.test(error.message)) {
+      const fallbackRes = await supabase
+        .from("events")
+        .update(baseUpdate)
+        .eq("id", eventId);
+      error = fallbackRes.error;
+    }
 
     if (error) {
       flash(`Update failed: ${error.message}`, false);
     } else {
+      setLocalEventPublishedState(eventId, editEPublished);
       flash("Event updated.");
       setEditingEventId(null);
       await loadAll();
     }
+    setBusy(false);
+  }
+
+  async function handleToggleEventPublished(ev: DbEvent) {
+    setBusy(true);
+    const supabase = createClient();
+    const currentlyPublished = isDbEventPublished(ev);
+    const nextPublished = !currentlyPublished;
+    const cleanFormat =
+      cleanEventFormatLabel(ev.format_label) ||
+      (ev.category === "challenge"
+        ? "Self-Paced Challenge"
+        : "Community Meetup");
+
+    // Optimistic UI update
+    setEvents((prev) =>
+      prev.map((item) =>
+        item.id === ev.id
+          ? {
+              ...item,
+              is_published: nextPublished,
+              format_label: nextPublished
+                ? cleanFormat
+                : `[UNPUBLISHED] ${cleanFormat}`,
+            }
+          : item
+      )
+    );
+    setLocalEventPublishedState(ev.id, nextPublished);
+
+    let { error } = await supabase
+      .from("events")
+      .update({
+        is_published: nextPublished,
+        format_label: cleanFormat,
+      })
+      .eq("id", ev.id);
+
+    if (error && /is_published/i.test(error.message)) {
+      const fallbackRes = await supabase
+        .from("events")
+        .update({
+          format_label: nextPublished
+            ? cleanFormat
+            : `[UNPUBLISHED] ${cleanFormat}`,
+        })
+        .eq("id", ev.id);
+      error = fallbackRes.error;
+    }
+
+    flash(
+      error
+        ? `Update failed: ${error.message}`
+        : `"${ev.title}" ${nextPublished ? "published" : "unpublished"}.`,
+      !error
+    );
+    await loadAll();
     setBusy(false);
   }
 
@@ -5048,112 +5152,153 @@ export default function AdminCmsView() {
             <div className="flex flex-col gap-5">
               <section className={cardCls}>
                 <h2 className="mb-3 text-lg font-extrabold text-slate-900">Events ({events.length})</h2>
+                {events.length === 0 && (
+                  <p className="text-sm text-slate-500">
+                    No community events in the database yet. Add one using the form below.
+                  </p>
+                )}
                 <ul className="divide-y divide-orange-100">
-                  {events.map((ev) => (
-                    <li key={ev.id} className="py-3">
-                      {editingEventId === ev.id ? (
-                        <div className="flex flex-col gap-2.5 rounded-xl border border-orange-200 bg-orange-50/40 p-3">
-                          <div className="grid gap-2.5 sm:grid-cols-2">
-                            <input
+                  {events.map((ev) => {
+                    const evPublished = isDbEventPublished(ev);
+                    return (
+                      <li key={ev.id} className="py-3">
+                        {editingEventId === ev.id ? (
+                          <div className="flex flex-col gap-2.5 rounded-xl border border-orange-200 bg-orange-50/40 p-3">
+                            <div className="grid gap-2.5 sm:grid-cols-2">
+                              <input
+                                className={inputCls}
+                                placeholder="Title *"
+                                value={editETitle}
+                                onChange={(e) => setEditETitle(e.target.value)}
+                              />
+                              <select
+                                className={inputCls}
+                                value={editECategory}
+                                onChange={(e) =>
+                                  setEditECategory(e.target.value as "meetup" | "challenge")
+                                }
+                              >
+                                <option value="meetup">Meetup</option>
+                                <option value="challenge">Challenge</option>
+                              </select>
+                              <input
+                                className={inputCls}
+                                placeholder="Date"
+                                value={editEDate}
+                                onChange={(e) => setEditEDate(e.target.value)}
+                              />
+                              <input
+                                className={inputCls}
+                                placeholder="Time"
+                                value={editETime}
+                                onChange={(e) => setEditETime(e.target.value)}
+                              />
+                              <input
+                                className={inputCls}
+                                placeholder="Location"
+                                value={editELocation}
+                                onChange={(e) => setEditELocation(e.target.value)}
+                              />
+                              <input
+                                className={inputCls}
+                                placeholder="Rewards"
+                                value={editERewards}
+                                onChange={(e) => setEditERewards(e.target.value)}
+                              />
+                            </div>
+                            <textarea
                               className={inputCls}
-                              placeholder="Title *"
-                              value={editETitle}
-                              onChange={(e) => setEditETitle(e.target.value)}
+                              rows={2}
+                              placeholder="Description"
+                              value={editEDesc}
+                              onChange={(e) => setEditEDesc(e.target.value)}
                             />
-                            <select
-                              className={inputCls}
-                              value={editECategory}
-                              onChange={(e) =>
-                                setEditECategory(e.target.value as "meetup" | "challenge")
-                              }
-                            >
-                              <option value="meetup">Meetup</option>
-                              <option value="challenge">Challenge</option>
-                            </select>
-                            <input
-                              className={inputCls}
-                              placeholder="Date"
-                              value={editEDate}
-                              onChange={(e) => setEditEDate(e.target.value)}
-                            />
-                            <input
-                              className={inputCls}
-                              placeholder="Time"
-                              value={editETime}
-                              onChange={(e) => setEditETime(e.target.value)}
-                            />
-                            <input
-                              className={inputCls}
-                              placeholder="Location"
-                              value={editELocation}
-                              onChange={(e) => setEditELocation(e.target.value)}
-                            />
-                            <input
-                              className={inputCls}
-                              placeholder="Rewards"
-                              value={editERewards}
-                              onChange={(e) => setEditERewards(e.target.value)}
-                            />
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <label className="flex items-center gap-2 text-xs font-bold text-slate-700">
+                                <input
+                                  type="checkbox"
+                                  checked={editEPublished}
+                                  onChange={(e) => setEditEPublished(e.target.checked)}
+                                  className="h-4 w-4 accent-orange-500"
+                                />
+                                Published
+                              </label>
+                              <div className="flex items-center gap-2">
+                                <button
+                                  type="button"
+                                  disabled={busy}
+                                  onClick={() => handleSaveEvent(ev.id)}
+                                  className={btnPrimary}
+                                >
+                                  Save Changes
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={busy}
+                                  onClick={() => setEditingEventId(null)}
+                                  className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50 cursor-pointer"
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                            </div>
                           </div>
-                          <textarea
-                            className={inputCls}
-                            rows={2}
-                            placeholder="Description"
-                            value={editEDesc}
-                            onChange={(e) => setEditEDesc(e.target.value)}
-                          />
-                          <div className="flex items-center gap-2">
-                            <button
-                              type="button"
-                              disabled={busy}
-                              onClick={() => handleSaveEvent(ev.id)}
-                              className={btnPrimary}
-                            >
-                              Save Changes
-                            </button>
-                            <button
-                              type="button"
-                              disabled={busy}
-                              onClick={() => setEditingEventId(null)}
-                              className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50 cursor-pointer"
-                            >
-                              Cancel
-                            </button>
+                        ) : (
+                          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                            <div className="min-w-0">
+                              <p className="truncate text-sm font-bold text-slate-900">{ev.title}</p>
+                              {ev.description && (
+                                <p className="truncate text-xs text-slate-600">{ev.description}</p>
+                              )}
+                              <p className="text-xs text-slate-500">
+                                {ev.category} • {ev.date_label} • {ev.location} •{" "}
+                                {evPublished ? "Published" : "Draft"}
+                              </p>
+                            </div>
+                            <div className="flex shrink-0 flex-wrap items-center gap-2">
+                              <span
+                                className={`rounded-full border px-2.5 py-0.5 text-[10px] font-extrabold uppercase ${
+                                  ev.category === "challenge"
+                                    ? "border-amber-300 bg-amber-100 text-amber-800"
+                                    : "border-orange-200 bg-orange-100 text-orange-800"
+                                }`}
+                              >
+                                {ev.category}
+                              </span>
+                              <button
+                                type="button"
+                                disabled={busy}
+                                onClick={() => handleToggleEventPublished(ev)}
+                                className={`rounded-lg border px-2.5 py-1 text-xs font-bold cursor-pointer disabled:opacity-50 ${
+                                  evPublished
+                                    ? "border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
+                                    : "border-slate-200 bg-slate-100 text-slate-600 hover:bg-slate-200"
+                                }`}
+                              >
+                                {evPublished ? "Published" : "Unpublished"}
+                              </button>
+                              <button
+                                type="button"
+                                disabled={busy}
+                                onClick={() => startEditEvent(ev)}
+                                className="rounded-lg border border-orange-200 px-2.5 py-1 text-xs font-bold text-orange-700 hover:bg-orange-50 disabled:opacity-50 cursor-pointer"
+                              >
+                                Edit
+                              </button>
+                              <button
+                                type="button"
+                                disabled={busy}
+                                onClick={() => handleDeleteEvent(ev)}
+                                className="rounded-lg border border-rose-200 px-2.5 py-1 text-xs font-bold text-rose-700 hover:bg-rose-50 disabled:opacity-50 cursor-pointer"
+                              >
+                                Delete
+                              </button>
+                            </div>
                           </div>
-                        </div>
-                      ) : (
-                        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                          <div className="min-w-0">
-                            <p className="truncate text-sm font-bold text-slate-900">{ev.title}</p>
-                            {ev.description && (
-                              <p className="truncate text-xs text-slate-600">{ev.description}</p>
-                            )}
-                            <p className="text-xs text-slate-500">
-                              {ev.category} • {ev.date_label} • {ev.location}
-                            </p>
-                          </div>
-                          <div className="flex shrink-0 items-center gap-2">
-                            <button
-                              type="button"
-                              disabled={busy}
-                              onClick={() => startEditEvent(ev)}
-                              className="rounded-lg border border-orange-200 px-2.5 py-1 text-xs font-bold text-orange-700 hover:bg-orange-50 disabled:opacity-50 cursor-pointer"
-                            >
-                              Edit
-                            </button>
-                            <button
-                              type="button"
-                              disabled={busy}
-                              onClick={() => handleDeleteEvent(ev)}
-                              className="rounded-lg border border-rose-200 px-2.5 py-1 text-xs font-bold text-rose-700 hover:bg-rose-50 disabled:opacity-50 cursor-pointer"
-                            >
-                              Delete
-                            </button>
-                          </div>
-                        </div>
-                      )}
-                    </li>
-                  ))}
+                        )}
+                      </li>
+                    );
+                  })}
                 </ul>
               </section>
 
@@ -5171,9 +5316,18 @@ export default function AdminCmsView() {
                   <input className={inputCls} placeholder="Rewards (e.g. Badge + 50 XP)" value={eRewards} onChange={(e) => setERewards(e.target.value)} />
                 </div>
                 <textarea className={inputCls} rows={3} placeholder="Description" value={eDesc} onChange={(e) => setEDesc(e.target.value)} />
-                <div>
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <label className="flex items-center gap-2 text-sm font-bold text-slate-700">
+                    <input
+                      type="checkbox"
+                      checked={ePublished}
+                      onChange={(e) => setEPublished(e.target.checked)}
+                      className="h-4 w-4 accent-orange-500"
+                    />
+                    Publish immediately
+                  </label>
                   <button type="submit" className={btnPrimary} disabled={busy}>
-                    {busy ? "Saving..." : "Add Event"}
+                    {busy ? "Saving..." : "+ Add Event"}
                   </button>
                 </div>
               </form>

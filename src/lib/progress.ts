@@ -1,4 +1,8 @@
 import { createClient } from "@/lib/supabase/client";
+import {
+  getCompletedLessonIds,
+  syncCompletedModulesToProfile,
+} from "@/lib/curriculumStorage";
 import { countries as staticCountries } from "@/data/countries";
 import { missions as staticMissions } from "@/data/missions";
 import { vocabularyItems as staticVocabularyItems } from "@/data/vocabulary";
@@ -206,23 +210,53 @@ function isSupabaseConfigured(): boolean {
   );
 }
 
+type StoredUserProgress = UserProgress & {
+  userId?: string;
+};
+
+let lastKnownUserId: string | undefined = undefined;
+
 /** Read progress from localStorage. Returns defaults if nothing is stored. */
-export function loadProgress(): UserProgress {
+export function loadProgress(forUserId?: string): UserProgress {
   if (typeof window === "undefined") return DEFAULT_PROGRESS;
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return DEFAULT_PROGRESS;
-    return { ...DEFAULT_PROGRESS, ...JSON.parse(raw) } as UserProgress;
+    const parsed = JSON.parse(raw) as StoredUserProgress;
+    if (forUserId && parsed.userId && parsed.userId !== forUserId) {
+      return DEFAULT_PROGRESS;
+    }
+    if (parsed.userId) {
+      lastKnownUserId = parsed.userId;
+    }
+    return {
+      xp: typeof parsed.xp === "number" ? parsed.xp : DEFAULT_PROGRESS.xp,
+      usaCompleted: Boolean(parsed.usaCompleted),
+      usaStampUnlocked: Boolean(parsed.usaStampUnlocked),
+      usaBadgeUnlocked: Boolean(parsed.usaBadgeUnlocked),
+      coffeeCupUnlocked: Boolean(parsed.coffeeCupUnlocked),
+      completedStages: Array.isArray(parsed.completedStages)
+        ? parsed.completedStages
+        : DEFAULT_PROGRESS.completedStages,
+    };
   } catch {
     return DEFAULT_PROGRESS;
   }
 }
 
 /** Persist progress to localStorage. */
-export function saveProgress(progress: UserProgress): void {
+export function saveProgress(progress: UserProgress, userId?: string): void {
+  const effectiveUserId = userId ?? lastKnownUserId;
+  if (effectiveUserId) {
+    lastKnownUserId = effectiveUserId;
+  }
   if (typeof window === "undefined") return;
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(progress));
+    const payload: StoredUserProgress = {
+      ...progress,
+      ...(effectiveUserId ? { userId: effectiveUserId } : {}),
+    };
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
   } catch {
     console.warn("Wordwise: could not save progress to localStorage.");
   }
@@ -230,6 +264,7 @@ export function saveProgress(progress: UserProgress): void {
 
 /** Clear all progress and reset to defaults. */
 export function clearProgress(): void {
+  lastKnownUserId = undefined;
   if (typeof window === "undefined") return;
   localStorage.removeItem(STORAGE_KEY);
 }
@@ -237,16 +272,30 @@ export function clearProgress(): void {
 /**
  * Queries `public.profiles` (for `xp`) and `public.user_mission_progress`
  * (for `country_id = 'usa'`) in Supabase, maps the database rows into
- * `UserProgress`, syncs the local cache, and returns it.
+ * `UserProgress`, syncs the local cache (and pushes higher user-owned local XP
+ * back to `public.profiles`), and returns it.
  */
 export async function fetchUserGameProgress(
   userId: string
 ): Promise<UserProgress> {
-  const fallback = loadProgress();
+  const fallback = loadProgress(userId);
   if (!userId || !isSupabaseConfigured()) return fallback;
 
   try {
     const supabase = createClient();
+
+    let rawStoredUserId: string | undefined = undefined;
+    if (typeof window !== "undefined") {
+      try {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        if (raw) {
+          const parsed = JSON.parse(raw) as { userId?: string };
+          rawStoredUserId = parsed.userId;
+        }
+      } catch {
+        // ignore
+      }
+    }
 
     const [profileRes, missionRes] = await Promise.all([
       supabase
@@ -262,28 +311,51 @@ export async function fetchUserGameProgress(
         .maybeSingle<DbUserMissionProgress>(),
     ]);
 
-    const profileXp =
+    const dbXp =
       typeof profileRes.data?.xp === "number"
         ? Math.max(0, profileRes.data.xp)
-        : fallback.xp;
+        : 0;
+
+    // Only merge local XP if the cache explicitly belongs to this user
+    // or if this is an existing user with dbXp > 0 and an untagged legacy cache
+    const canMergeLocal =
+      rawStoredUserId === userId || (!rawStoredUserId && dbXp > 0);
+    const profileXp = canMergeLocal ? Math.max(dbXp, fallback.xp) : dbXp;
 
     const missionRow = missionRes.data;
-    const completedStages = Array.isArray(missionRow?.completed_stages)
+    const dbStages = Array.isArray(missionRow?.completed_stages)
       ? missionRow.completed_stages.filter(
           (s: unknown): s is string => typeof s === "string"
         )
-      : fallback.completedStages;
+      : [];
+    const completedStages = canMergeLocal
+      ? Array.from(new Set([...dbStages, ...fallback.completedStages]))
+      : dbStages;
 
     const nextProgress: UserProgress = {
       xp: profileXp,
-      usaCompleted: Boolean(missionRow?.mission_completed),
-      usaStampUnlocked: Boolean(missionRow?.stamp_unlocked),
-      usaBadgeUnlocked: Boolean(missionRow?.badge_unlocked),
-      coffeeCupUnlocked: Boolean(missionRow?.gift_unlocked),
+      usaCompleted:
+        Boolean(missionRow?.mission_completed) ||
+        (canMergeLocal && fallback.usaCompleted),
+      usaStampUnlocked:
+        Boolean(missionRow?.stamp_unlocked) ||
+        (canMergeLocal && fallback.usaStampUnlocked),
+      usaBadgeUnlocked:
+        Boolean(missionRow?.badge_unlocked) ||
+        (canMergeLocal && fallback.usaBadgeUnlocked),
+      coffeeCupUnlocked:
+        Boolean(missionRow?.gift_unlocked) ||
+        (canMergeLocal && fallback.coffeeCupUnlocked),
       completedStages,
     };
 
-    saveProgress(nextProgress);
+    saveProgress(nextProgress, userId);
+
+    // If local progress had unsynced XP or stages, persist immediately to Supabase
+    if (profileXp > dbXp || completedStages.length > dbStages.length) {
+      await saveUserGameProgressToDb(userId, nextProgress);
+    }
+
     return nextProgress;
   } catch {
     return fallback;
@@ -308,6 +380,7 @@ export async function saveUserGameProgressToDb(
         .from("profiles")
         .update({ xp: progress.xp })
         .eq("id", userId),
+      syncCompletedModulesToProfile(userId, getCompletedLessonIds().length),
       supabase.from("user_mission_progress").upsert(
         {
           user_id: userId,

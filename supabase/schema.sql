@@ -11,14 +11,21 @@ CREATE TABLE IF NOT EXISTS public.profiles (
   email TEXT,
   display_name TEXT,
   school_name TEXT DEFAULT 'High School Student',
+  avatar_url TEXT DEFAULT '🧑‍🚀',
   role TEXT DEFAULT 'student' CHECK (role IN ('student', 'admin')),
   subscription_tier TEXT DEFAULT 'free' CHECK (subscription_tier IN ('free', 'pro_trial', 'pro')),
   xp INTEGER DEFAULT 0,
+  completed_modules INTEGER DEFAULT 0,
   current_streak INTEGER DEFAULT 1,
   last_active_date DATE DEFAULT CURRENT_DATE,
   freeze_count INTEGER DEFAULT 1,
   created_at TIMESTAMPTZ DEFAULT now()
 );
+
+-- Ensure leaderboard columns exist on pre-existing databases (idempotent)
+ALTER TABLE public.profiles
+  ADD COLUMN IF NOT EXISTS completed_modules INTEGER DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS avatar_url TEXT DEFAULT '🧑‍🚀';
 
 -- -----------------------------------------------------------------------------
 -- 2. LESSONS TABLE (Reading Modules & Flashcard Decks)
@@ -111,8 +118,13 @@ CREATE TABLE IF NOT EXISTS public.events (
   description TEXT,
   rewards TEXT,
   base_registered_count INTEGER DEFAULT 0,
-  sort_order INTEGER DEFAULT 0
+  sort_order INTEGER DEFAULT 0,
+  is_published BOOLEAN NOT NULL DEFAULT true
 );
+
+-- Ensure is_published exists on pre-existing events table (idempotent)
+ALTER TABLE public.events
+  ADD COLUMN IF NOT EXISTS is_published BOOLEAN NOT NULL DEFAULT true;
 
 -- -----------------------------------------------------------------------------
 -- 8. USER LESSON PROGRESS TABLE
@@ -230,9 +242,10 @@ CREATE POLICY "Users can delete own profile"
 
 -- ── User Lesson Progress Policies ────────────────────────────────────────────
 DROP POLICY IF EXISTS "Users can view own lesson progress" ON public.user_lesson_progress;
-CREATE POLICY "Users can view own lesson progress"
+DROP POLICY IF EXISTS "Public read access for user_lesson_progress" ON public.user_lesson_progress;
+CREATE POLICY "Public read access for user_lesson_progress"
   ON public.user_lesson_progress FOR SELECT
-  USING (auth.uid() = user_id);
+  USING (true);
 
 DROP POLICY IF EXISTS "Users can insert own lesson progress" ON public.user_lesson_progress;
 CREATE POLICY "Users can insert own lesson progress"
@@ -252,9 +265,10 @@ CREATE POLICY "Users can delete own lesson progress"
 
 -- ── User Mission Progress Policies ───────────────────────────────────────────
 DROP POLICY IF EXISTS "Users can view own mission progress" ON public.user_mission_progress;
-CREATE POLICY "Users can view own mission progress"
+DROP POLICY IF EXISTS "Public read access for user_mission_progress" ON public.user_mission_progress;
+CREATE POLICY "Public read access for user_mission_progress"
   ON public.user_mission_progress FOR SELECT
-  USING (auth.uid() = user_id);
+  USING (true);
 
 DROP POLICY IF EXISTS "Users can insert own mission progress" ON public.user_mission_progress;
 CREATE POLICY "Users can insert own mission progress"

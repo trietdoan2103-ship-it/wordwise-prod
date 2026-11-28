@@ -357,7 +357,7 @@ export default function TargetSmasherGame({
   if (isGameOver) {
     const accuracy = attempts > 0 ? Math.round((hits / attempts) * 100) : 0;
     return (
-      <div className="mx-auto flex w-full max-w-3xl flex-col gap-5 rounded-3xl border border-slate-700 bg-slate-900 p-6 text-white shadow-2xl md:p-8">
+      <div className="mx-auto flex w-full max-w-3xl flex-col gap-5 overflow-x-hidden rounded-3xl border border-slate-700 bg-slate-900 p-4 text-white shadow-2xl sm:p-6 md:p-8">
         <div className="flex flex-col items-center gap-2 text-center">
           <span className="text-4xl" aria-hidden="true">
             🎯
@@ -460,7 +460,7 @@ export default function TargetSmasherGame({
 
   return (
     <div
-      className={`mx-auto flex w-full max-w-4xl flex-col gap-4 rounded-3xl border bg-slate-900 p-5 text-white shadow-2xl md:p-7 ${
+      className={`mx-auto flex w-full max-w-4xl flex-col gap-4 overflow-x-hidden rounded-3xl border bg-slate-900 p-4 text-white shadow-2xl sm:p-5 md:p-7 ${
         isFever
           ? "border-amber-400 shadow-[0_0_25px_rgba(251,191,36,0.3)]"
           : "border-slate-700"

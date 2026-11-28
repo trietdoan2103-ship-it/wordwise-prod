@@ -7,9 +7,11 @@ export interface DbProfile {
   email: string | null;
   display_name: string | null;
   school_name: string;
+  avatar_url?: string | null;
   role: UserRole;
   subscription_tier: SubscriptionTierType;
   xp: number;
+  completed_modules?: number;
   current_streak: number;
   last_active_date: string; // YYYY-MM-DD
   freeze_count: number;
@@ -151,6 +153,7 @@ export interface DbEvent {
   rewards: string | null;
   base_registered_count: number;
   sort_order: number;
+  is_published?: boolean;
 }
 
 export interface DbCountryVocabulary {

@@ -25,6 +25,7 @@ export interface STEMEvent {
   perks: string;
   coverEmoji: string;
   tags: string[];
+  isPublished?: boolean;
 }
 
 export const STEM_EVENTS: STEMEvent[] = [

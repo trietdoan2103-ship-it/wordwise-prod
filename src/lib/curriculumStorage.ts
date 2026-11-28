@@ -388,10 +388,12 @@ export async function saveFullLessonToSupabase(
 }
 
 export interface CurriculumProgressData {
+  userId?: string;
   completedLessonIds: string[];
 }
 
 let memoryCompletedIds: string[] | null = null;
+let memoryProgressUserId: string | undefined = undefined;
 let cachedLessons: Lesson[] | null = null;
 
 function isSupabaseConfigured(): boolean {
@@ -576,33 +578,59 @@ export async function fetchCurriculumLessons(): Promise<Lesson[]> {
   }
 }
 
-/**
- * Synchronously reads completed lesson IDs from memory/localStorage cache.
- */
-export function getCompletedLessonIds(): string[] {
-  if (typeof window === "undefined") return memoryCompletedIds || [];
+function getStoredCurriculumProgressPayload(): {
+  userId?: string;
+  completedLessonIds: string[];
+} {
+  if (typeof window === "undefined") {
+    return {
+      userId: memoryProgressUserId,
+      completedLessonIds: memoryCompletedIds || [],
+    };
+  }
   try {
     const raw = localStorage.getItem(CURRICULUM_PROGRESS_KEY);
-    if (!raw) return memoryCompletedIds || [];
+    if (!raw) {
+      return {
+        userId: memoryProgressUserId,
+        completedLessonIds: memoryCompletedIds || [],
+      };
+    }
     const parsed = JSON.parse(raw);
     if (Array.isArray(parsed?.completedLessonIds)) {
       const ids = parsed.completedLessonIds.filter(
         (id: unknown): id is string => typeof id === "string"
       );
+      const uid =
+        typeof parsed?.userId === "string" ? parsed.userId : undefined;
       memoryCompletedIds = ids;
-      return ids;
+      memoryProgressUserId = uid;
+      return { userId: uid, completedLessonIds: ids };
     }
     if (Array.isArray(parsed)) {
       const ids = parsed.filter(
         (id: unknown): id is string => typeof id === "string"
       );
       memoryCompletedIds = ids;
-      return ids;
+      return { userId: undefined, completedLessonIds: ids };
     }
-    return memoryCompletedIds || [];
+    return {
+      userId: memoryProgressUserId,
+      completedLessonIds: memoryCompletedIds || [],
+    };
   } catch {
-    return memoryCompletedIds || [];
+    return {
+      userId: memoryProgressUserId,
+      completedLessonIds: memoryCompletedIds || [],
+    };
   }
+}
+
+/**
+ * Synchronously reads completed lesson IDs from memory/localStorage cache.
+ */
+export function getCompletedLessonIds(): string[] {
+  return getStoredCurriculumProgressPayload().completedLessonIds;
 }
 
 /** Backward-compatible alias */
@@ -611,11 +639,19 @@ export const getCurriculumProgress = getCompletedLessonIds;
 /**
  * Persists completed lesson IDs to local cache and dispatches `wordwise_curriculum_updated`.
  */
-export function saveCurriculumProgress(completedLessonIds: string[]): void {
+export function saveCurriculumProgress(
+  completedLessonIds: string[],
+  userId?: string
+): void {
+  const effectiveUserId = userId ?? memoryProgressUserId;
   memoryCompletedIds = completedLessonIds;
+  memoryProgressUserId = effectiveUserId;
   if (typeof window === "undefined") return;
   try {
-    const data: CurriculumProgressData = { completedLessonIds };
+    const data: CurriculumProgressData = {
+      ...(effectiveUserId ? { userId: effectiveUserId } : {}),
+      completedLessonIds,
+    };
     localStorage.setItem(CURRICULUM_PROGRESS_KEY, JSON.stringify(data));
     window.dispatchEvent(
       new CustomEvent("wordwise_curriculum_updated", {
@@ -628,11 +664,69 @@ export function saveCurriculumProgress(completedLessonIds: string[]): void {
 }
 
 /**
+ * Persists the learner's completed modules count (`0..6`) directly to `public.profiles`
+ * (`completed_modules` column + schema-safe `freeze_count` carrier) so all viewers
+ * on the Leaderboard see the exact same `X/6 Modules` and composite XP.
+ */
+export async function syncCompletedModulesToProfile(
+  userId: string,
+  completedModulesCount: number
+): Promise<void> {
+  if (!userId || !isSupabaseConfigured()) return;
+
+  try {
+    const supabase = createClient();
+    const clampedModules = Math.min(6, Math.max(0, completedModulesCount));
+
+    const { data: prof } = await supabase
+      .from("profiles")
+      .select("*")
+      .eq("id", userId)
+      .maybeSingle<{
+        freeze_count?: number | null;
+        completed_modules?: number | null;
+      }>();
+
+    const rawFreeze =
+      typeof prof?.freeze_count === "number" ? prof.freeze_count : 1;
+    const actualFreeze = rawFreeze >= 100 ? rawFreeze % 100 : rawFreeze;
+    const avatarPrefix =
+      rawFreeze >= 10000 ? Math.floor(rawFreeze / 10000) * 10000 : 0;
+    const encodedFreeze =
+      avatarPrefix + 1000 + clampedModules * 100 + (actualFreeze % 100);
+
+    const { error } = await supabase
+      .from("profiles")
+      .update({
+        completed_modules: clampedModules,
+        freeze_count: encodedFreeze,
+      })
+      .eq("id", userId);
+
+    if (error) {
+      await supabase
+        .from("profiles")
+        .update({
+          freeze_count: encodedFreeze,
+        })
+        .eq("id", userId);
+    }
+  } catch (err) {
+    console.warn(
+      "Wordwise: failed to sync completed_modules to profiles.",
+      err
+    );
+  }
+}
+
+/**
  * Queries `SELECT lesson_id FROM user_lesson_progress WHERE user_id = user.id`
- * from Supabase, caches the result locally, and dispatches `wordwise_curriculum_updated`.
+ * from Supabase, reconciles with user-owned local progress, persists `completed_modules`
+ * to `public.profiles`, caches the result locally, and dispatches `wordwise_curriculum_updated`.
  */
 export async function fetchCompletedLessonIds(): Promise<string[]> {
-  const fallback = getCompletedLessonIds();
+  const localPayload = getStoredCurriculumProgressPayload();
+  const fallback = localPayload.completedLessonIds;
   if (!isSupabaseConfigured()) return fallback;
 
   try {
@@ -643,25 +737,62 @@ export async function fetchCompletedLessonIds(): Promise<string[]> {
 
     if (!user) return fallback;
 
-    const { data, error } = await supabase
-      .from("user_lesson_progress")
-      .select("lesson_id")
-      .eq("user_id", user.id);
+    const [lessonsRes, profRes] = await Promise.all([
+      supabase
+        .from("user_lesson_progress")
+        .select("lesson_id")
+        .eq("user_id", user.id),
+      supabase
+        .from("profiles")
+        .select("*")
+        .eq("id", user.id)
+        .maybeSingle<{
+          xp?: number | null;
+          completed_modules?: number | null;
+          freeze_count?: number | null;
+        }>(),
+    ]);
 
-    if (error || !data) {
-      return fallback;
+    const dbIds = Array.isArray(lessonsRes.data)
+      ? Array.from(
+          new Set(
+            lessonsRes.data
+              .map((row: { lesson_id?: unknown }) => row.lesson_id)
+              .filter((id): id is string => typeof id === "string")
+          )
+        )
+      : [];
+
+    const profXp =
+      typeof profRes.data?.xp === "number" ? profRes.data.xp : 0;
+    const canClaimLocalIds =
+      localPayload.userId === user.id ||
+      (!localPayload.userId &&
+        fallback.length > 0 &&
+        (dbIds.length > 0 || profXp > 0));
+
+    const mergedIds = canClaimLocalIds
+      ? Array.from(new Set([...dbIds, ...fallback]))
+      : dbIds;
+
+    // Backfill any missing lesson rows into user_lesson_progress
+    const missingInDb = mergedIds.filter((id) => !dbIds.includes(id));
+    if (missingInDb.length > 0) {
+      await supabase.from("user_lesson_progress").upsert(
+        missingInDb.map((lessonId) => ({
+          user_id: user.id,
+          lesson_id: lessonId,
+          completed_at: new Date().toISOString(),
+        })),
+        { onConflict: "user_id,lesson_id" }
+      );
     }
 
-    const ids = Array.from(
-      new Set(
-        data
-          .map((row: { lesson_id?: unknown }) => row.lesson_id)
-          .filter((id): id is string => typeof id === "string")
-      )
-    );
+    // Immediately persist completed_modules count to public.profiles so all leaderboard viewers see it
+    await syncCompletedModulesToProfile(user.id, mergedIds.length);
 
-    saveCurriculumProgress(ids);
-    return ids;
+    saveCurriculumProgress(mergedIds, user.id);
+    return mergedIds;
   } catch {
     return fallback;
   }
@@ -671,6 +802,7 @@ export async function fetchCompletedLessonIds(): Promise<string[]> {
  * Marks a lesson as completed:
  * - Optimistically updates the local cache & dispatches `wordwise_curriculum_updated`
  * - Upserts `{ user_id: user.id, lesson_id: lessonId }` into `public.user_lesson_progress`
+ * - Immediately updates `completed_modules` in `public.profiles`
  * - Triggers `recordStreakAction()`
  */
 export function markLessonCompleted(lessonId: string): string[] {
@@ -691,14 +823,19 @@ export function markLessonCompleted(lessonId: string): string[] {
         } = await supabase.auth.getUser();
         if (!user) return;
 
-        await supabase.from("user_lesson_progress").upsert(
-          {
-            user_id: user.id,
-            lesson_id: lessonId,
-            completed_at: new Date().toISOString(),
-          },
-          { onConflict: "user_id,lesson_id" }
-        );
+        saveCurriculumProgress(updated, user.id);
+
+        await Promise.all([
+          supabase.from("user_lesson_progress").upsert(
+            {
+              user_id: user.id,
+              lesson_id: lessonId,
+              completed_at: new Date().toISOString(),
+            },
+            { onConflict: "user_id,lesson_id" }
+          ),
+          syncCompletedModulesToProfile(user.id, updated.length),
+        ]);
       } catch (err) {
         console.warn(
           "Wordwise: failed to upsert user_lesson_progress to Supabase.",
@@ -731,11 +868,16 @@ export function uncompleteLesson(lessonId: string): string[] {
         } = await supabase.auth.getUser();
         if (!user) return;
 
-        await supabase
-          .from("user_lesson_progress")
-          .delete()
-          .eq("user_id", user.id)
-          .eq("lesson_id", lessonId);
+        saveCurriculumProgress(updated, user.id);
+
+        await Promise.all([
+          supabase
+            .from("user_lesson_progress")
+            .delete()
+            .eq("user_id", user.id)
+            .eq("lesson_id", lessonId),
+          syncCompletedModulesToProfile(user.id, updated.length),
+        ]);
       } catch (err) {
         console.warn(
           "Wordwise: failed to delete user_lesson_progress from Supabase.",

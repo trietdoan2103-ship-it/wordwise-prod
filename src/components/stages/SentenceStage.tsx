@@ -155,7 +155,7 @@ export default function SentenceStage({ onComplete, items }: SentenceStageProps)
 
   if (phase === "complete") {
     return (
-      <div className="stage-shell stage-theme--sentence">
+      <div className="stage-shell stage-theme--sentence mx-auto w-full max-w-3xl">
         <div className="stage-shell-card">
           <span className="stage-shell-icon" aria-hidden="true">🎉</span>
           <h2 className="stage-shell-title">Sentence Complete!</h2>
@@ -180,7 +180,7 @@ export default function SentenceStage({ onComplete, items }: SentenceStageProps)
 
   if (phase === "gameover") {
     return (
-      <div className="stage-shell stage-theme--sentence">
+      <div className="stage-shell stage-theme--sentence mx-auto w-full max-w-3xl">
         <div className="stage-shell-card">
           <span className="stage-shell-icon" aria-hidden="true">💔</span>
           <h2 className="stage-shell-title">Game Over</h2>
@@ -220,7 +220,7 @@ export default function SentenceStage({ onComplete, items }: SentenceStageProps)
   // ─────────────────────────────────────────────────────────────────────────
 
   return (
-    <div className="sentence-container stage-theme--sentence">
+    <div className="sentence-container stage-theme--sentence mx-auto w-full max-w-3xl overflow-x-hidden">
 
       {/* ── Top Bar ────────────────────────────────────────────────────── */}
       <div className="sentence-topbar">

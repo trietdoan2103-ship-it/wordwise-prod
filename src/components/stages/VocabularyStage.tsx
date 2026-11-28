@@ -26,7 +26,7 @@ export default function VocabularyStage({ onComplete, items }: VocabularyStagePr
 
   if (isComplete) {
     return (
-      <div className="stage-shell stage-theme--vocabulary">
+      <div className="stage-shell stage-theme--vocabulary mx-auto w-full max-w-3xl">
         <div className="stage-shell-card">
           <span className="stage-shell-icon" aria-hidden="true">
             🎉
@@ -74,7 +74,7 @@ export default function VocabularyStage({ onComplete, items }: VocabularyStagePr
   const isCorrect = isSubmitted && selectedOption === item.correctIndex;
 
   return (
-    <div className="vocab-container stage-theme--vocabulary">
+    <div className="vocab-container stage-theme--vocabulary mx-auto w-full max-w-3xl overflow-x-hidden">
       <div className="vocab-header">
         <span className="vocab-icon" aria-hidden="true">📖</span>
         <span className="vocab-title-text">Vocabulary</span>

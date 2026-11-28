@@ -2,7 +2,11 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { useSession } from "@/context/SessionContext";
+import {
+  useSession,
+  validateDisplayName,
+  validateSchoolName,
+} from "@/context/SessionContext";
 
 interface SignUpModalProps {
   onClose: () => void;
@@ -65,8 +69,16 @@ export default function SignUpModal({
 
   function validate(): boolean {
     const next: typeof errors = {};
-    if (!displayName.trim()) {
-      next.displayName = "Full name / display name is required.";
+    const nameError = validateDisplayName(displayName);
+    if (nameError) {
+      next.displayName = nameError;
+    }
+    if (schoolName.trim()) {
+      const schoolError = validateSchoolName(schoolName);
+      if (schoolError) {
+        setServerError(schoolError);
+        return false;
+      }
     }
     if (!email.trim()) {
       next.email = "Email address is required.";

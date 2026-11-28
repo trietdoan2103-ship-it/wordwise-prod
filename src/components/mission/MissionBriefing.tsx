@@ -25,7 +25,7 @@ export default function MissionBriefing({
   onStart,
 }: MissionBriefingProps) {
   return (
-    <div className="briefing-shell">
+    <div className="briefing-shell mx-auto w-full max-w-3xl overflow-x-hidden">
       {/* ── Label ── */}
       <p className="briefing-eyebrow">MISSION BRIEFING</p>
 

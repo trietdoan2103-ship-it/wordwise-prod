@@ -51,14 +51,21 @@ export default function EventsView() {
 
     function handleStorage() {
       setRegisteredIds(getRegisteredEventIds());
+      void hydrateEventsFromSupabase();
+    }
+
+    function handleCatalogUpdate() {
+      void hydrateEventsFromSupabase();
     }
 
     window.addEventListener("wordwise_events_updated", handleUpdate);
+    window.addEventListener("wordwise_events_catalog_updated", handleCatalogUpdate);
     window.addEventListener("storage", handleStorage);
 
     return () => {
       isMounted = false;
       window.removeEventListener("wordwise_events_updated", handleUpdate);
+      window.removeEventListener("wordwise_events_catalog_updated", handleCatalogUpdate);
       window.removeEventListener("storage", handleStorage);
     };
   }, [session?.id]);

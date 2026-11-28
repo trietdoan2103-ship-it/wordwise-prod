@@ -25,7 +25,7 @@ export default function LearningRecap({
   onContinue,
 }: LearningRecapProps) {
   return (
-    <div className="recap-shell">
+    <div className="recap-shell mx-auto w-full max-w-3xl overflow-x-hidden">
       {/* ── Header ── */}
       <div className="recap-header">
         <span className="recap-header-icon" aria-hidden="true">🌟</span>

@@ -210,7 +210,7 @@ export default function TechRunnerGame({
   if (isGameOver) {
     const incorrectCount = answeredCount - correctCount;
     return (
-      <div className="mx-auto flex w-full max-w-3xl flex-col gap-5 rounded-3xl border border-slate-700 bg-slate-900 p-6 text-white shadow-2xl md:p-8">
+      <div className="mx-auto flex w-full max-w-3xl flex-col gap-5 overflow-x-hidden rounded-3xl border border-slate-700 bg-slate-900 p-4 text-white shadow-2xl sm:p-6 md:p-8">
         <div className="flex flex-col items-center gap-2 text-center">
           <span className="text-4xl" aria-hidden="true">
             🏁
@@ -306,7 +306,7 @@ export default function TechRunnerGame({
 
   return (
     <div
-      className={`mx-auto flex w-full max-w-4xl flex-col gap-4 rounded-3xl border bg-slate-900 p-5 text-white shadow-2xl transition-transform md:p-7 ${
+      className={`mx-auto flex w-full max-w-4xl flex-col gap-4 overflow-x-hidden rounded-3xl border bg-slate-900 p-4 text-white shadow-2xl transition-transform sm:p-5 md:p-7 ${
         gateState.status === "incorrect"
           ? "border-rose-500/80 animate-pulse"
           : isOverdrive
@@ -356,7 +356,7 @@ export default function TechRunnerGame({
 
       {/* ── 3-Lane Running Track Play Area ([ LEFT ] [ CENTER ] [ RIGHT ]) ── */}
       <div
-        className="relative grid grid-cols-3 gap-3 rounded-2xl border border-slate-700 bg-slate-950 p-4 md:p-6"
+        className="relative grid grid-cols-3 gap-2 rounded-2xl border border-slate-700 bg-slate-950 p-2.5 sm:gap-3 sm:p-4 md:p-6"
         onTouchStart={(e) => {
           touchStartXRef.current = e.touches[0]?.clientX ?? null;
         }}
@@ -396,7 +396,7 @@ export default function TechRunnerGame({
               type="button"
               onClick={() => submitGate(laneIdx)}
               disabled={gateState.status !== "active"}
-              className={`group relative flex min-h-[220px] flex-col items-center justify-between rounded-2xl border-2 p-3.5 text-center transition-all cursor-pointer ${
+              className={`group relative flex min-h-[200px] min-w-0 flex-col items-center justify-between rounded-2xl border-2 p-2 text-center transition-all sm:min-h-[220px] sm:p-3.5 cursor-pointer ${
                 isCorrectGate
                   ? "border-emerald-400 bg-emerald-950/60 shadow-[0_0_20px_rgba(16,185,129,0.4)]"
                   : isWrongChosen
@@ -425,7 +425,7 @@ export default function TechRunnerGame({
                 <span className="text-[10px] font-bold uppercase tracking-wider text-orange-300/90">
                   Gate {laneIdx + 1}
                 </span>
-                <span className="mt-1 text-sm font-extrabold sm:text-base">
+                <span className="mt-1 break-words text-xs font-extrabold sm:text-base">
                   {optionText}
                 </span>
               </div>

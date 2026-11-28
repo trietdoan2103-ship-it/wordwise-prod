@@ -18,6 +18,7 @@ import {
 } from "@/lib/progress";
 import { XP } from "@/lib/xp";
 import { recordStreakAction } from "@/lib/streak";
+import { fetchCompletedLessonIds } from "@/lib/curriculumStorage";
 import { useSession } from "@/context/SessionContext";
 
 // ─── Context ──────────────────────────────────────────────────────────────────
@@ -33,10 +34,13 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
   // Hydrate from local cache first, then sync live from Supabase when session?.id is present
   useEffect(() => {
     let isMounted = true;
-    setProgress(loadProgress());
+    setProgress(loadProgress(session?.id));
 
     if (session?.id) {
-      fetchUserGameProgress(session.id).then((dbProgress) => {
+      Promise.all([
+        fetchUserGameProgress(session.id),
+        fetchCompletedLessonIds(),
+      ]).then(([dbProgress]) => {
         if (isMounted) {
           setProgress(dbProgress);
         }
@@ -50,8 +54,8 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
 
   // Persist to localStorage cache on every state change
   useEffect(() => {
-    saveProgress(progress);
-  }, [progress]);
+    saveProgress(progress, session?.id);
+  }, [progress, session?.id]);
 
   // ─── Actions ────────────────────────────────────────────────────────────────
 

@@ -1,13 +1,23 @@
 /**
- * Leaderboard & Community Rankings Data + Supabase Fetcher — Sprint 5.
+ * Leaderboard & Community Rankings Data + Supabase Single-Source-of-Truth Fetcher.
  *
  * Queries `public.profiles`, `public.user_lesson_progress`, and `public.user_mission_progress`
- * to rank real students by composite score (`xp + completedLessonsCount * 50`).
- * Uses Smart Podium Population to pad with baseline entries when fewer than 6 real
- * profiles exist in the database.
+ * to rank 100% real learners by composite score (`xp + completedModules * 50`).
+ * Every client renders strictly from the live Supabase response so all browsers/devices
+ * see identical XP, `X/6 Modules`, avatar, school, and rank.
  */
 
 import { createClient } from "@/lib/supabase/client";
+import {
+  getDeterministicAvatar,
+  sanitizeDisplayName,
+  validateSchoolName,
+} from "@/context/SessionContext";
+import {
+  fetchCompletedLessonIds,
+  syncCompletedModulesToProfile,
+} from "@/lib/curriculumStorage";
+import { fetchUserGameProgress } from "@/lib/progress";
 
 export interface StudentRankEntry {
   id: string;
@@ -35,8 +45,6 @@ export interface LiveLeaderboardResult {
   uniqueSchoolsCount: number;
 }
 
-const AVATAR_POOL = ["🧑‍🔬", "👩‍💻", "🧑‍🚀", "👩‍🔬", "🧑‍💼", "👩‍🎓", "🧑‍🔧", "🧑‍💻"];
-
 function isSupabaseConfigured(): boolean {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
@@ -49,315 +57,74 @@ function isSupabaseConfigured(): boolean {
   );
 }
 
-export const NATIONAL_RANKINGS: StudentRankEntry[] = [
-  {
-    id: "stu-1",
-    rank: 1,
-    name: "Bảo Nam",
-    school: "THPT Chuyên Lê Hồng Phong",
-    province: "TP. Hồ Chí Minh",
-    avatar: "🧑‍🔬",
-    modulesCompleted: 6,
-    totalModules: 6,
-    xp: 1280,
-    trend: "up",
-    trendAmount: 2,
-    badge: "Gold League",
-  },
-  {
-    id: "stu-2",
-    rank: 2,
-    name: "Phương Linh",
-    school: "THPT Chuyên Hà Nội - Amsterdam",
-    province: "Hà Nội",
-    avatar: "👩‍💻",
-    modulesCompleted: 6,
-    totalModules: 6,
-    xp: 1140,
-    trend: "up",
-    trendAmount: 1,
-    badge: "Gold League",
-  },
-  {
-    id: "stu-3",
-    rank: 3,
-    name: "Minh Khôi",
-    school: "THPT Chuyên Lam Sơn",
-    province: "Thanh Hóa",
-    avatar: "🧑‍🚀",
-    modulesCompleted: 5,
-    totalModules: 6,
-    xp: 980,
-    trend: "down",
-    trendAmount: 1,
-    badge: "Silver League",
-  },
-  {
-    id: "stu-4",
-    rank: 4,
-    name: "Thu Trang",
-    school: "THPT Chuyên Khoa học Tự nhiên",
-    province: "ĐHQG Hà Nội",
-    avatar: "👩‍🔬",
-    modulesCompleted: 5,
-    totalModules: 6,
-    xp: 890,
-    trend: "up",
-    trendAmount: 3,
-    badge: "Silver League",
-  },
-  {
-    id: "stu-5",
-    rank: 5,
-    name: "Hoàng Long",
-    school: "THPT Chuyên Quốc Học Huế",
-    province: "Thừa Thiên Huế",
-    avatar: "🧑‍💼",
-    modulesCompleted: 4,
-    totalModules: 6,
-    xp: 820,
-    trend: "up",
-    trendAmount: 1,
-    badge: "Silver League",
-  },
-  {
-    id: "stu-6",
-    rank: 6,
-    name: "Khánh Vy",
-    school: "THPT Chuyên Trần Phú",
-    province: "Hải Phòng",
-    avatar: "👩‍🎓",
-    modulesCompleted: 4,
-    totalModules: 6,
-    xp: 760,
-    trend: "down",
-    trendAmount: 2,
-    badge: "Bronze League",
-  },
-  {
-    id: "stu-7",
-    rank: 7,
-    name: "Đức Anh",
-    school: "THPT Chuyên Phan Bội Châu",
-    province: "Nghệ An",
-    avatar: "🧑‍🔧",
-    modulesCompleted: 4,
-    totalModules: 6,
-    xp: 710,
-    trend: "up",
-    trendAmount: 2,
-    badge: "Bronze League",
-  },
-  {
-    id: "stu-8",
-    rank: 8,
-    name: "Mai Anh",
-    school: "THPT Chuyên Nguyễn Du",
-    province: "Đắk Lắk",
-    avatar: "👩‍💼",
-    modulesCompleted: 3,
-    totalModules: 6,
-    xp: 650,
-    trend: "up",
-    trendAmount: 1,
-    badge: "Bronze League",
-  },
-  {
-    id: "stu-9",
-    rank: 9,
-    name: "Tuấn Kiệt",
-    school: "THPT Chuyên Thăng Long",
-    province: "Lâm Đồng",
-    avatar: "🧑‍💻",
-    modulesCompleted: 3,
-    totalModules: 6,
-    xp: 590,
-    trend: "down",
-    trendAmount: 1,
-    badge: "Bronze League",
-  },
-  {
-    id: "stu-10",
-    rank: 10,
-    name: "Hà My",
-    school: "THPT Chuyên Nguyễn Bỉnh Khiêm",
-    province: "Quảng Nam",
-    avatar: "👩‍🔬",
-    modulesCompleted: 3,
-    totalModules: 6,
-    xp: 540,
-    trend: "up",
-    trendAmount: 1,
-    badge: "Bronze League",
-  },
-];
+/**
+ * Decodes `completed_modules` stored in `public.profiles` (`completed_modules` column
+ * or schema-safe `freeze_count` carrier).
+ */
+export function decodeProfileCompletedModules(prof: {
+  completed_modules?: number | null;
+  freeze_count?: number | null;
+}): number {
+  const fromCol =
+    typeof prof.completed_modules === "number"
+      ? Math.max(0, prof.completed_modules)
+      : 0;
 
-export const WEEKLY_RANKINGS: StudentRankEntry[] = [
-  {
-    id: "wk-1",
-    rank: 1,
-    name: "Phương Linh",
-    school: "THPT Chuyên Hà Nội - Amsterdam",
-    province: "Hà Nội",
-    avatar: "👩‍💻",
-    modulesCompleted: 3,
-    totalModules: 6,
-    xp: 480,
-    trend: "up",
-    trendAmount: 4,
-    badge: "Weekly Champion",
-  },
-  {
-    id: "wk-2",
-    rank: 2,
-    name: "Thu Trang",
-    school: "THPT Chuyên Khoa học Tự nhiên",
-    province: "ĐHQG Hà Nội",
-    avatar: "👩‍🔬",
-    modulesCompleted: 3,
-    totalModules: 6,
-    xp: 420,
-    trend: "up",
-    trendAmount: 2,
-    badge: "Rising Star",
-  },
-  {
-    id: "wk-3",
-    rank: 3,
-    name: "Bảo Nam",
-    school: "THPT Chuyên Lê Hồng Phong",
-    province: "TP. Hồ Chí Minh",
-    avatar: "🧑‍🔬",
-    modulesCompleted: 2,
-    totalModules: 6,
-    xp: 390,
-    trend: "down",
-    trendAmount: 2,
-    badge: "Consistent Learner",
-  },
-  {
-    id: "wk-4",
-    rank: 4,
-    name: "Đức Anh",
-    school: "THPT Chuyên Phan Bội Châu",
-    province: "Nghệ An",
-    avatar: "🧑‍🔧",
-    modulesCompleted: 2,
-    totalModules: 6,
-    xp: 350,
-    trend: "up",
-    trendAmount: 5,
-    badge: "Weekly Fast Mover",
-  },
-  {
-    id: "wk-5",
-    rank: 5,
-    name: "Minh Khôi",
-    school: "THPT Chuyên Lam Sơn",
-    province: "Thanh Hóa",
-    avatar: "🧑‍🚀",
-    modulesCompleted: 2,
-    totalModules: 6,
-    xp: 320,
-    trend: "down",
-    trendAmount: 1,
-    badge: "Active",
-  },
-  {
-    id: "wk-6",
-    rank: 6,
-    name: "Khánh Vy",
-    school: "THPT Chuyên Trần Phú",
-    province: "Hải Phòng",
-    avatar: "👩‍🎓",
-    modulesCompleted: 2,
-    totalModules: 6,
-    xp: 290,
-    trend: "up",
-    trendAmount: 1,
-    badge: "Active",
-  },
-  {
-    id: "wk-7",
-    rank: 7,
-    name: "Hoàng Long",
-    school: "THPT Chuyên Quốc Học Huế",
-    province: "Thừa Thiên Huế",
-    avatar: "🧑‍💼",
-    modulesCompleted: 1,
-    totalModules: 6,
-    xp: 260,
-    trend: "down",
-    trendAmount: 3,
-    badge: "Active",
-  },
-  {
-    id: "wk-8",
-    rank: 8,
-    name: "Gia Hưng",
-    school: "THPT Chuyên Bến Tre",
-    province: "Bến Tre",
-    avatar: "🧑‍🏫",
-    modulesCompleted: 1,
-    totalModules: 6,
-    xp: 230,
-    trend: "up",
-    trendAmount: 2,
-    badge: "Active",
-  },
-  {
-    id: "wk-9",
-    rank: 9,
-    name: "Hà My",
-    school: "THPT Chuyên Nguyễn Bỉnh Khiêm",
-    province: "Quảng Nam",
-    avatar: "👩‍🔬",
-    modulesCompleted: 1,
-    totalModules: 6,
-    xp: 210,
-    trend: "up",
-    trendAmount: 1,
-    badge: "Active",
-  },
-  {
-    id: "wk-10",
-    rank: 10,
-    name: "Tuấn Kiệt",
-    school: "THPT Chuyên Thăng Long",
-    province: "Lâm Đồng",
-    avatar: "🧑‍💻",
-    modulesCompleted: 1,
-    totalModules: 6,
-    xp: 180,
-    trend: "down",
-    trendAmount: 2,
-    badge: "Active",
-  },
-];
+  const rawFreeze =
+    typeof prof.freeze_count === "number" ? prof.freeze_count : 0;
+  const fromFreeze =
+    rawFreeze >= 1000
+      ? Math.floor((rawFreeze % 1000) / 100)
+      : rawFreeze >= 100
+        ? Math.floor((rawFreeze % 10000) / 100)
+        : 0;
 
-function assignRanksAndBadges(
+  return Math.min(6, Math.max(fromCol, fromFreeze));
+}
+
+/**
+ * Flushes the currently authenticated user's XP and completed modules to `public.profiles`
+ * before querying the global leaderboard so Supabase is the single source of truth.
+ */
+export async function syncCurrentUserLeaderboardProfile(
+  userId?: string | null
+): Promise<void> {
+  if (!userId || !isSupabaseConfigured()) return;
+  try {
+    await Promise.all([
+      fetchUserGameProgress(userId),
+      fetchCompletedLessonIds(),
+    ]);
+  } catch {
+    // ignore transient errors
+  }
+}
+
+export function assignRanksAndBadges(
   entries: StudentRankEntry[],
   mode: "national" | "weekly"
 ): StudentRankEntry[] {
-  const sorted = [...entries].sort((a, b) => b.xp - a.xp);
+  const sorted = [...entries].sort((a, b) => {
+    if (b.xp !== a.xp) return b.xp - a.xp;
+    if (b.modulesCompleted !== a.modulesCompleted) {
+      return b.modulesCompleted - a.modulesCompleted;
+    }
+    return a.id.localeCompare(b.id);
+  });
   return sorted.map((entry, idx) => {
     const rank = idx + 1;
-    let badge = entry.badge;
-    if (mode === "national") {
-      badge =
-        rank <= 2
+    const badge =
+      mode === "national"
+        ? rank <= 2
           ? "Gold League"
           : rank <= 5
-          ? "Silver League"
-          : "Bronze League";
-    } else {
-      badge =
-        rank === 1
+            ? "Silver League"
+            : "Bronze League"
+        : rank === 1
           ? "Weekly Champion"
           : rank <= 3
-          ? "Rising Star"
-          : "Active";
-    }
+            ? "Rising Star"
+            : "Active";
     return {
       ...entry,
       rank,
@@ -368,17 +135,16 @@ function assignRanksAndBadges(
 
 /**
  * Queries real users from `public.profiles`, `public.user_lesson_progress`, and
- * `public.user_mission_progress` on Supabase, computes each user's composite score
- * (`xp + completedLessonsCount * 50`), and merges with baseline entries when fewer
- * than 6 real users exist in the database.
+ * `public.user_mission_progress` on Supabase and computes each user's composite score
+ * (`xp + completedModules * 50`). Returns an empty leaderboard when no real users exist.
  */
 export async function fetchLiveLeaderboard(): Promise<LiveLeaderboardResult> {
   if (!isSupabaseConfigured()) {
     return {
-      national: NATIONAL_RANKINGS,
-      weekly: WEEKLY_RANKINGS,
-      totalUsersCount: NATIONAL_RANKINGS.length,
-      uniqueSchoolsCount: new Set(NATIONAL_RANKINGS.map((r) => r.school)).size,
+      national: [],
+      weekly: [],
+      totalUsersCount: 0,
+      uniqueSchoolsCount: 0,
     };
   }
 
@@ -388,7 +154,8 @@ export async function fetchLiveLeaderboard(): Promise<LiveLeaderboardResult> {
     const [profilesRes, lessonsProgRes, missionsProgRes] = await Promise.all([
       supabase
         .from("profiles")
-        .select("id, display_name, school_name, xp, current_streak"),
+        .select("*")
+        .order("xp", { ascending: false }),
       supabase
         .from("user_lesson_progress")
         .select("user_id, lesson_id"),
@@ -401,16 +168,19 @@ export async function fetchLiveLeaderboard(): Promise<LiveLeaderboardResult> {
       id: string;
       display_name: string | null;
       school_name: string | null;
+      avatar_url?: string | null;
       xp: number | null;
+      completed_modules?: number | null;
       current_streak: number | null;
+      freeze_count?: number | null;
     }[];
 
     if (profilesRes.error || profileRows.length === 0) {
       return {
-        national: NATIONAL_RANKINGS,
-        weekly: WEEKLY_RANKINGS,
-        totalUsersCount: NATIONAL_RANKINGS.length,
-        uniqueSchoolsCount: new Set(NATIONAL_RANKINGS.map((r) => r.school)).size,
+        national: [],
+        weekly: [],
+        totalUsersCount: 0,
+        uniqueSchoolsCount: 0,
       };
     }
 
@@ -443,22 +213,41 @@ export async function fetchLiveLeaderboard(): Promise<LiveLeaderboardResult> {
     }
 
     const realEntries: StudentRankEntry[] = profileRows.map((prof, idx) => {
+      const fromProfile = decodeProfileCompletedModules(prof);
+      const fromLessonTable = lessonsCountByUser.get(prof.id)?.size || 0;
       const completedLessonsCount = Math.min(
         6,
-        lessonsCountByUser.get(prof.id)?.size || 0
+        Math.max(fromProfile, fromLessonTable)
       );
+
+      // If user_lesson_progress has a higher count than the profile row, sync it back
+      if (fromLessonTable > fromProfile) {
+        void syncCompletedModulesToProfile(prof.id, fromLessonTable);
+      }
+
       const baseXp = typeof prof.xp === "number" ? Math.max(0, prof.xp) : 0;
       const compositeScore = baseXp + completedLessonsCount * 50;
       const streak =
         typeof prof.current_streak === "number" ? prof.current_streak : 1;
 
+      const safeName = sanitizeDisplayName(prof.display_name, "STEM Explorer");
+      const rawSchool = (prof.school_name || "").trim();
+      const safeSchool =
+        rawSchool && validateSchoolName(rawSchool) === null
+          ? rawSchool
+          : "High School Student";
+
       return {
         id: prof.id,
         rank: idx + 1,
-        name: prof.display_name?.trim() || "Explorer",
-        school: prof.school_name?.trim() || "High School Student",
+        name: safeName,
+        school: safeSchool,
         province: "Việt Nam",
-        avatar: AVATAR_POOL[idx % AVATAR_POOL.length],
+        avatar: getDeterministicAvatar(
+          prof.id,
+          prof.avatar_url,
+          prof.freeze_count
+        ),
         modulesCompleted: completedLessonsCount,
         totalModules: 6,
         xp: compositeScore,
@@ -469,33 +258,16 @@ export async function fetchLiveLeaderboard(): Promise<LiveLeaderboardResult> {
       };
     });
 
-    const realNamesLower = new Set(
-      realEntries.map((r) => r.name.toLowerCase())
+    const rankedNational = assignRanksAndBadges(realEntries, "national");
+    const rankedWeekly = assignRanksAndBadges(
+      realEntries.map((r) => ({ ...r })),
+      "weekly"
     );
 
-    let nationalMerged = [...realEntries];
-    let weeklyMerged = realEntries.map((r) => ({ ...r }));
-
-    // Smart Podium Population: pad with baseline entries if fewer than 6 real users
-    if (realEntries.length < 6) {
-      const targetSize = Math.max(10, realEntries.length);
-      const neededNational = NATIONAL_RANKINGS.filter(
-        (b) => !realNamesLower.has(b.name.toLowerCase())
-      ).slice(0, targetSize - realEntries.length);
-
-      const neededWeekly = WEEKLY_RANKINGS.filter(
-        (b) => !realNamesLower.has(b.name.toLowerCase())
-      ).slice(0, targetSize - realEntries.length);
-
-      nationalMerged = [...realEntries, ...neededNational];
-      weeklyMerged = [...weeklyMerged, ...neededWeekly];
-    }
-
-    const rankedNational = assignRanksAndBadges(nationalMerged, "national");
-    const rankedWeekly = assignRanksAndBadges(weeklyMerged, "weekly");
-
     const uniqueSchoolsCount = new Set(
-      rankedNational.map((e) => e.school.toLowerCase())
+      rankedNational
+        .map((e) => e.school.trim().toLowerCase())
+        .filter(Boolean)
     ).size;
 
     return {
@@ -506,10 +278,10 @@ export async function fetchLiveLeaderboard(): Promise<LiveLeaderboardResult> {
     };
   } catch {
     return {
-      national: NATIONAL_RANKINGS,
-      weekly: WEEKLY_RANKINGS,
-      totalUsersCount: NATIONAL_RANKINGS.length,
-      uniqueSchoolsCount: new Set(NATIONAL_RANKINGS.map((r) => r.school)).size,
+      national: [],
+      weekly: [],
+      totalUsersCount: 0,
+      uniqueSchoolsCount: 0,
     };
   }
 }

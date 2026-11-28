@@ -13,11 +13,238 @@ import type { DbProfile } from "@/types/database";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
+export const LEADERBOARD_AVATAR_POOL = [
+  "🧑‍🔬",
+  "👩‍💻",
+  "🧑‍🚀",
+  "👩‍🔬",
+  "🧑‍💼",
+  "👩‍🎓",
+  "🧑‍🔧",
+  "🧑‍💻",
+] as const;
+
+export function getDeterministicAvatar(
+  userId: string,
+  customAvatar?: string | null,
+  rawFreezeCount?: number | null
+): string {
+  if (
+    customAvatar &&
+    typeof customAvatar === "string" &&
+    (LEADERBOARD_AVATAR_POOL as readonly string[]).includes(customAvatar.trim())
+  ) {
+    return customAvatar.trim();
+  }
+  if (typeof rawFreezeCount === "number" && rawFreezeCount >= 10000) {
+    const encodedIdx = Math.floor(rawFreezeCount / 10000) - 1;
+    if (encodedIdx >= 0 && encodedIdx < LEADERBOARD_AVATAR_POOL.length) {
+      return LEADERBOARD_AVATAR_POOL[encodedIdx];
+    }
+  }
+  let hash = 0;
+  const seed = userId || "explorer";
+  for (let i = 0; i < seed.length; i++) {
+    hash = (hash * 31 + seed.charCodeAt(i)) >>> 0;
+  }
+  return LEADERBOARD_AVATAR_POOL[hash % LEADERBOARD_AVATAR_POOL.length];
+}
+
+// ─── Profanity & Spam Username Guard ──────────────────────────────────────────
+
+const PROFANE_EXACT_TOKENS = new Set([
+  "fuck",
+  "fucker",
+  "fucking",
+  "fck",
+  "fuk",
+  "fuq",
+  "shit",
+  "shitty",
+  "bullshit",
+  "bitch",
+  "bastard",
+  "asshole",
+  "dick",
+  "cock",
+  "pussy",
+  "cunt",
+  "slut",
+  "whore",
+  "nigger",
+  "nigga",
+  "faggot",
+  "fag",
+  "retard",
+  "stfu",
+  "gtfo",
+  "wtf",
+  "wth",
+  "lmao",
+  "dm",
+  "dmm",
+  "dcm",
+  "dkm",
+  "vcl",
+  "vl",
+  "vkl",
+  "vler",
+  "cc",
+  "cl",
+  "clgt",
+  "dit",
+  "djt",
+  "du",
+  "duma",
+  "deo",
+  "lon",
+  "loz",
+  "buoi",
+  "cac",
+  "cak",
+  "chich",
+  "xoac",
+  "ngu",
+  "nguu",
+]);
+
+const PROFANE_SUBSTRINGS = [
+  "fuck",
+  "shit",
+  "bitch",
+  "asshole",
+  "nigger",
+  "nigga",
+  "faggot",
+  "cunt",
+  "whore",
+  "ditme",
+  "ditconme",
+  "duconme",
+  "duma",
+  "vailon",
+  "vaicalon",
+  "concho",
+  "chochet",
+  "matday",
+  "khonnan",
+];
+
+function normalizeForModeration(input: string): string {
+  return input
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/đ/g, "d")
+    .replace(/Đ/g, "D")
+    .toLowerCase()
+    .trim();
+}
+
+/**
+ * Lightweight validation check on sign-up and profile/display-name updates
+ * to reject abusive/profane strings or pure-symbol spam (such as "=)").
+ * Returns an error string if invalid, or null if valid.
+ */
+export function validateDisplayName(rawName: string): string | null {
+  const trimmed = rawName.trim();
+  if (!trimmed) {
+    return "Full name / display name is required.";
+  }
+  if (trimmed.length < 2) {
+    return "Display name must be at least 2 characters long.";
+  }
+  if (trimmed.length > 40) {
+    return "Display name must be 40 characters or fewer.";
+  }
+
+  // Reject pure-symbol spam (such as "=)", ":)", "???", "1234")
+  const letterMatches = trimmed.match(/\p{L}/gu) || [];
+  if (letterMatches.length < 2) {
+    return "Please enter a real display name with at least 2 letters (symbol-only names like '=)' are not allowed).";
+  }
+
+  // Reject strings containing disallowed punctuation/emoticon characters
+  if (/[=<>[\]{}|\\^~`@#$%*&?!:;()+/]/.test(trimmed)) {
+    return "Display name can only contain letters, numbers, spaces, hyphens, or periods (avoid symbols like '=)' ).";
+  }
+
+  // Reject excessive repeated characters (e.g. "aaaaaaa")
+  if (/(.)\1{4,}/iu.test(trimmed)) {
+    return "Please enter a valid display name without repeated character spam.";
+  }
+
+  // Profanity check (English & Vietnamese, accent-insensitive)
+  const normalized = normalizeForModeration(trimmed);
+  const compact = normalized.replace(/[^a-z0-9]/g, "");
+  const tokens = normalized.split(/[^a-z0-9]+/).filter(Boolean);
+
+  for (const token of tokens) {
+    if (PROFANE_EXACT_TOKENS.has(token)) {
+      return "Please choose a respectful display name appropriate for our student learning community.";
+    }
+  }
+
+  for (const sub of PROFANE_SUBSTRINGS) {
+    if (compact.includes(sub)) {
+      return "Please choose a respectful display name appropriate for our student learning community.";
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Validates optional high school name for profanity or pure-symbol spam.
+ */
+export function validateSchoolName(rawSchool: string): string | null {
+  const trimmed = rawSchool.trim();
+  if (!trimmed) return null; // Optional field
+  if (trimmed.length > 70) {
+    return "High school name must be 70 characters or fewer.";
+  }
+  const letterMatches = trimmed.match(/\p{L}/gu) || [];
+  if (letterMatches.length < 2) {
+    return "Please enter a valid high school name with at least 2 letters.";
+  }
+  const normalized = normalizeForModeration(trimmed);
+  const compact = normalized.replace(/[^a-z0-9]/g, "");
+  const tokens = normalized.split(/[^a-z0-9]+/).filter(Boolean);
+
+  for (const token of tokens) {
+    if (PROFANE_EXACT_TOKENS.has(token)) {
+      return "Please enter a respectful high school name.";
+    }
+  }
+  for (const sub of PROFANE_SUBSTRINGS) {
+    if (compact.includes(sub)) {
+      return "Please enter a respectful high school name.";
+    }
+  }
+  return null;
+}
+
+/**
+ * Sanitizes a display name retrieved from the database so that any legacy row
+ * containing profanity or symbol spam (e.g. "=)") never renders on the Leaderboard.
+ */
+export function sanitizeDisplayName(
+  rawName: string | null | undefined,
+  fallback = "STEM Explorer"
+): string {
+  const candidate = (rawName || "").trim();
+  if (!candidate) return fallback;
+  if (validateDisplayName(candidate) !== null) {
+    return fallback;
+  }
+  return candidate;
+}
+
 export interface UserSession {
   id: string;
   email: string;
   displayName: string;
   schoolName: string;
+  avatar: string;
   role: "student" | "admin";
   subscriptionTier: "free" | "pro_trial" | "pro";
 }
@@ -44,6 +271,12 @@ export interface SessionContextValue {
     email: string,
     password: string
   ) => Promise<{ error: string | null }>;
+  /** Update the current user's display name, school name, or avatar in Supabase profiles */
+  updateProfile: (updates: {
+    displayName?: string;
+    schoolName?: string;
+    avatar?: string;
+  }) => Promise<{ error: string | null }>;
   /** Sign out from Supabase Auth and clear session state */
   logout: () => Promise<void>;
   /** Alias for logout() used by existing navigation components */
@@ -111,11 +344,37 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
         .maybeSingle<DbProfile>();
 
       if (profile && !error) {
+        const cleanFallbackName = sanitizeDisplayName(
+          metaName,
+          sanitizeDisplayName(deriveDisplayName(email), "STEM Explorer")
+        );
+        const safeName = sanitizeDisplayName(
+          profile.display_name,
+          cleanFallbackName
+        );
+        const safeSchool =
+          validateSchoolName(profile.school_name || "") === null
+            ? (profile.school_name || "").trim() || metaSchool
+            : "High School Student";
+
+        // Auto-clean legacy profane/symbol-spam display_name in Supabase if needed
+        if (profile.display_name && profile.display_name.trim() !== safeName) {
+          void supabase
+            .from("profiles")
+            .update({ display_name: safeName })
+            .eq("id", user.id);
+        }
+
         return {
           id: user.id,
           email: profile.email || email,
-          displayName: profile.display_name || metaName,
-          schoolName: profile.school_name || metaSchool,
+          displayName: safeName,
+          schoolName: safeSchool,
+          avatar: getDeterministicAvatar(
+            user.id,
+            profile.avatar_url,
+            profile.freeze_count
+          ),
           role: profile.role === "admin" ? "admin" : "student",
           subscriptionTier:
             profile.subscription_tier === "pro" ||
@@ -125,6 +384,15 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
         };
       }
 
+      const safeMetaName = sanitizeDisplayName(
+        metaName,
+        sanitizeDisplayName(deriveDisplayName(email), "STEM Explorer")
+      );
+      const safeMetaSchool =
+        validateSchoolName(metaSchool) === null
+          ? metaSchool
+          : "High School Student";
+
       // Upsert fallback profile if trigger hasn't fired or row is missing
       const { data: upserted } = await supabase
         .from("profiles")
@@ -132,8 +400,8 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
           {
             id: user.id,
             email,
-            display_name: metaName,
-            school_name: metaSchool,
+            display_name: safeMetaName,
+            school_name: safeMetaSchool,
           },
           { onConflict: "id" }
         )
@@ -143,8 +411,13 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       return {
         id: user.id,
         email: upserted?.email || email,
-        displayName: upserted?.display_name || metaName,
-        schoolName: upserted?.school_name || metaSchool,
+        displayName: sanitizeDisplayName(upserted?.display_name, safeMetaName),
+        schoolName: upserted?.school_name || safeMetaSchool,
+        avatar: getDeterministicAvatar(
+          user.id,
+          upserted?.avatar_url,
+          upserted?.freeze_count
+        ),
         role: upserted?.role === "admin" ? "admin" : "student",
         subscriptionTier:
           upserted?.subscription_tier === "pro" ||
@@ -235,8 +508,23 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
 
       const supabase = createClient();
       const cleanEmail = email.trim();
-      const cleanName = displayName.trim() || deriveDisplayName(cleanEmail);
-      const cleanSchool = (schoolName || "").trim() || "High School Student";
+      const rawName = displayName.trim();
+
+      const nameValidationError = validateDisplayName(rawName);
+      if (nameValidationError) {
+        return { error: nameValidationError };
+      }
+
+      const rawSchool = (schoolName || "").trim();
+      if (rawSchool) {
+        const schoolValidationError = validateSchoolName(rawSchool);
+        if (schoolValidationError) {
+          return { error: schoolValidationError };
+        }
+      }
+
+      const cleanName = rawName;
+      const cleanSchool = rawSchool || "High School Student";
 
       const { data, error } = await supabase.auth.signUp({
         email: cleanEmail,
@@ -314,10 +602,131 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     [fetchOrEnsureProfile]
   );
 
+  const updateProfile = useCallback(
+    async (updates: {
+      displayName?: string;
+      schoolName?: string;
+      avatar?: string;
+    }): Promise<{ error: string | null }> => {
+      if (!isSupabaseConfigured()) {
+        return { error: "Supabase is not configured." };
+      }
+
+      if (updates.displayName !== undefined) {
+        const nameErr = validateDisplayName(updates.displayName);
+        if (nameErr) return { error: nameErr };
+      }
+
+      if (updates.schoolName !== undefined && updates.schoolName.trim()) {
+        const schoolErr = validateSchoolName(updates.schoolName);
+        if (schoolErr) return { error: schoolErr };
+      }
+
+      const supabase = createClient();
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      if (!user) {
+        return { error: "You must be logged in to update your profile." };
+      }
+
+      const { data: currentProf } = await supabase
+        .from("profiles")
+        .select("*")
+        .eq("id", user.id)
+        .maybeSingle<DbProfile>();
+
+      const nextName =
+        updates.displayName !== undefined
+          ? updates.displayName.trim()
+          : currentProf?.display_name || session?.displayName || "STEM Explorer";
+      const nextSchool =
+        updates.schoolName !== undefined
+          ? updates.schoolName.trim() || "High School Student"
+          : currentProf?.school_name || session?.schoolName || "High School Student";
+      const nextAvatar =
+        updates.avatar &&
+        (LEADERBOARD_AVATAR_POOL as readonly string[]).includes(updates.avatar)
+          ? updates.avatar
+          : getDeterministicAvatar(
+              user.id,
+              currentProf?.avatar_url,
+              currentProf?.freeze_count
+            );
+
+      const avatarIdx = Math.max(
+        0,
+        (LEADERBOARD_AVATAR_POOL as readonly string[]).indexOf(nextAvatar)
+      );
+      const rawFreeze =
+        typeof currentProf?.freeze_count === "number"
+          ? currentProf.freeze_count
+          : 1;
+      const actualFreeze = rawFreeze >= 100 ? rawFreeze % 100 : rawFreeze;
+      const existingModules =
+        rawFreeze >= 1000
+          ? Math.floor((rawFreeze % 1000) / 100)
+          : rawFreeze >= 100
+            ? Math.floor((rawFreeze % 10000) / 100)
+            : typeof currentProf?.completed_modules === "number"
+              ? currentProf.completed_modules
+              : 0;
+      const encodedFreeze =
+        (avatarIdx + 1) * 10000 +
+        1000 +
+        Math.min(6, Math.max(0, existingModules)) * 100 +
+        (actualFreeze % 100);
+
+      const basePayload: Record<string, unknown> = {
+        display_name: nextName,
+        school_name: nextSchool,
+        freeze_count: encodedFreeze,
+      };
+
+      const { error: fullErr } = await supabase
+        .from("profiles")
+        .update({
+          ...basePayload,
+          avatar_url: nextAvatar,
+        })
+        .eq("id", user.id);
+
+      if (fullErr) {
+        const { error: fallbackErr } = await supabase
+          .from("profiles")
+          .update(basePayload)
+          .eq("id", user.id);
+        if (fallbackErr) {
+          return { error: fallbackErr.message };
+        }
+      }
+
+      const updatedSession = await fetchOrEnsureProfile(user);
+      setSession({
+        ...updatedSession,
+        displayName: nextName,
+        schoolName: nextSchool,
+        avatar: nextAvatar,
+      });
+
+      return { error: null };
+    },
+    [fetchOrEnsureProfile, session?.displayName, session?.schoolName]
+  );
+
   const logout = useCallback(async () => {
     if (isSupabaseConfigured()) {
       const supabase = createClient();
       await supabase.auth.signOut();
+    }
+    if (typeof window !== "undefined") {
+      try {
+        localStorage.removeItem("wordwise_progress");
+        localStorage.removeItem("wordwise_curriculum_progress");
+      } catch {
+        // ignore
+      }
     }
     setSession(null);
   }, []);
@@ -340,6 +749,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     loading: !isHydrated,
     signUp,
     signIn,
+    updateProfile,
     logout,
     signOut: logout,
     refreshProfile,

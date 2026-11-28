@@ -12,8 +12,65 @@ import { STEM_EVENTS, type STEMEvent } from "@/data/events";
 import type { DbEvent } from "@/types/database";
 
 export const REGISTERED_EVENTS_STORAGE_KEY = "wordwise_registered_events";
+export const UNPUBLISHED_EVENTS_STORAGE_KEY = "wordwise_unpublished_events_v1";
 
 let memoryRegisteredIds: string[] | null = null;
+
+export function getLocalUnpublishedEventIds(): string[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = localStorage.getItem(UNPUBLISHED_EVENTS_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed)
+      ? parsed.filter((id: unknown): id is string => typeof id === "string")
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+export function setLocalEventPublishedState(
+  eventId: string,
+  isPublished: boolean
+): void {
+  if (typeof window === "undefined") return;
+  try {
+    const current = new Set(getLocalUnpublishedEventIds());
+    if (isPublished) {
+      current.delete(eventId);
+    } else {
+      current.add(eventId);
+    }
+    localStorage.setItem(
+      UNPUBLISHED_EVENTS_STORAGE_KEY,
+      JSON.stringify(Array.from(current))
+    );
+    window.dispatchEvent(new CustomEvent("wordwise_events_catalog_updated"));
+  } catch {
+    // ignore storage errors
+  }
+}
+
+export function isDbEventPublished(row: DbEvent): boolean {
+  if (typeof row.is_published === "boolean") {
+    return row.is_published;
+  }
+  if (
+    typeof row.format_label === "string" &&
+    row.format_label.startsWith("[UNPUBLISHED]")
+  ) {
+    return false;
+  }
+  if (getLocalUnpublishedEventIds().includes(row.id)) {
+    return false;
+  }
+  return true;
+}
+
+export function cleanEventFormatLabel(formatLabel?: string | null): string {
+  return (formatLabel || "").replace(/^\[UNPUBLISHED\]\s*/, "").trim();
+}
 
 function isSupabaseConfigured(): boolean {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -29,11 +86,17 @@ function isSupabaseConfigured(): boolean {
 
 /**
  * Queries `public.events` ordered by `sort_order` from Supabase,
+ * filtering to ONLY published events (`is_published === true`),
  * mapping DB rows into `STEMEvent` and falling back cleanly to `STEM_EVENTS`.
  */
 export async function fetchCommunityEvents(): Promise<STEMEvent[]> {
+  const localUnpublished = new Set(getLocalUnpublishedEventIds());
+  const defaultPublished = STEM_EVENTS.filter(
+    (e) => e.isPublished !== false && !localUnpublished.has(e.id)
+  );
+
   if (!isSupabaseConfigured()) {
-    return STEM_EVENTS;
+    return defaultPublished;
   }
 
   try {
@@ -45,12 +108,15 @@ export async function fetchCommunityEvents(): Promise<STEMEvent[]> {
 
     const rows = (data || []) as DbEvent[];
     if (error || rows.length === 0) {
-      return STEM_EVENTS;
+      return defaultPublished;
     }
 
-    return rows.map((row, idx) => {
+    const publishedRows = rows.filter((row) => isDbEventPublished(row));
+
+    return publishedRows.map((row, idx) => {
       const staticMatch = STEM_EVENTS.find((e) => e.id === row.id);
       const isChallenge = row.category === "challenge";
+      const cleanFormat = cleanEventFormatLabel(row.format_label);
 
       // Extract numeric XP reward from rewards string if present (e.g., "+ 50 XP")
       const xpMatch = row.rewards?.match(/(\d+)\s*XP/i);
@@ -60,7 +126,7 @@ export async function fetchCommunityEvents(): Promise<STEMEvent[]> {
         staticMatch?.badge ||
         (isChallenge
           ? "CHALLENGE"
-          : row.format_label?.toLowerCase().includes("speaking")
+          : cleanFormat.toLowerCase().includes("speaking")
           ? "SPEAKING CLUB"
           : "MEETUP");
 
@@ -69,7 +135,7 @@ export async function fetchCommunityEvents(): Promise<STEMEvent[]> {
         title: row.title,
         subtitle: row.subtitle || staticMatch?.subtitle || "",
         description: row.description || staticMatch?.description || "",
-        format: row.format_label || staticMatch?.format || "Community Event",
+        format: cleanFormat || staticMatch?.format || "Community Event",
         badge,
         category: isChallenge ? "challenge" : "meetup",
         date: row.date_label || staticMatch?.date || "Upcoming",
@@ -93,10 +159,11 @@ export async function fetchCommunityEvents(): Promise<STEMEvent[]> {
           (isChallenge
             ? ["Sprint", "Vocabulary", "Self-Paced"]
             : ["Community", "Meetup", "Speaking Practice"]),
+        isPublished: true,
       };
     });
   } catch {
-    return STEM_EVENTS;
+    return defaultPublished;
   }
 }
 

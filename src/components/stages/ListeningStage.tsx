@@ -55,7 +55,7 @@ export default function ListeningStage({ onComplete, items }: ListeningStageProp
 
   if (isComplete) {
     return (
-      <div className="stage-shell stage-theme--listening">
+      <div className="stage-shell stage-theme--listening mx-auto w-full max-w-3xl">
         <div className="stage-shell-card">
           <span className="stage-shell-icon" aria-hidden="true">
             🎉
@@ -107,7 +107,7 @@ export default function ListeningStage({ onComplete, items }: ListeningStageProp
   };
 
   return (
-    <div className="listen-container stage-theme--listening">
+    <div className="listen-container stage-theme--listening mx-auto w-full max-w-3xl overflow-x-hidden">
       {/* ── Stage header ── */}
       <div className="listen-header">
         <span className="listen-icon" aria-hidden="true">

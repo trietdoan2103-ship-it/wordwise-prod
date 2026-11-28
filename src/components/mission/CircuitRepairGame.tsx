@@ -281,7 +281,7 @@ export default function CircuitRepairGame({
   // ── Complete / Game Over Screens ──────────────────────────────────────────
   if (phase === "complete") {
     return (
-      <div className="stage-shell stage-theme--sentence">
+      <div className="stage-shell stage-theme--sentence mx-auto w-full max-w-3xl">
         <div className="stage-shell-card">
           <span className="stage-shell-icon" aria-hidden="true">
             ⚡
@@ -308,7 +308,7 @@ export default function CircuitRepairGame({
 
   if (phase === "gameover") {
     return (
-      <div className="stage-shell stage-theme--sentence">
+      <div className="stage-shell stage-theme--sentence mx-auto w-full max-w-3xl">
         <div className="stage-shell-card">
           <span className="stage-shell-icon" aria-hidden="true">
             🪫
@@ -374,7 +374,7 @@ export default function CircuitRepairGame({
         ];
 
   return (
-    <div className="mx-auto flex w-full max-w-4xl flex-col gap-4 rounded-3xl border border-slate-700 bg-slate-900 p-5 text-white shadow-2xl md:p-7">
+    <div className="mx-auto flex w-full max-w-4xl flex-col gap-4 overflow-x-hidden rounded-3xl border border-slate-700 bg-slate-900 p-4 text-white shadow-2xl sm:p-5 md:p-7">
       {/* ── Top Bar — Status ── */}
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-4">
         <div className="flex flex-wrap items-center gap-2.5">
@@ -458,9 +458,9 @@ export default function CircuitRepairGame({
       </p>
 
       {/* ── Play Area — Electronic Circuit Board ── */}
-      <div className="relative grid grid-cols-[1fr_90px_1fr] items-stretch gap-0 rounded-2xl border border-slate-700/90 bg-slate-950/90 p-4 shadow-inner sm:grid-cols-[1fr_140px_1fr] md:p-6">
+      <div className="relative grid grid-cols-[minmax(0,1fr)_52px_minmax(0,1fr)] items-stretch gap-0 rounded-2xl border border-slate-700/90 bg-slate-950/90 p-3 shadow-inner sm:grid-cols-[minmax(0,1fr)_120px_minmax(0,1fr)] sm:p-4 md:grid-cols-[minmax(0,1fr)_140px_minmax(0,1fr)] md:p-6">
         {/* Left Column: 4 Clue Chips */}
-        <div className="flex flex-col justify-between gap-3 py-1">
+        <div className="flex min-w-0 flex-col justify-between gap-3 py-1">
           {currentBoard?.pairs.map((pair, leftIdx) => {
             const isMatched = matchedPairs[leftIdx] !== undefined;
             const isSelected = selectedLeft === leftIdx;
@@ -555,7 +555,7 @@ export default function CircuitRepairGame({
         </div>
 
         {/* Right Column: 4 Shuffled Answer Nodes */}
-        <div className="flex flex-col justify-between gap-3 py-1">
+        <div className="flex min-w-0 flex-col justify-between gap-3 py-1">
           {rightNodes.map((node) => {
             const isMatched = Object.values(matchedPairs).includes(
               node.rightSlot

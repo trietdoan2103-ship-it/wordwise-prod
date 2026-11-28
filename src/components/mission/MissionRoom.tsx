@@ -277,7 +277,7 @@ function SpeakingAiStage({
   if (!turn) return null;
 
   return (
-    <div className="mx-auto flex w-full max-w-2xl flex-col gap-5 rounded-3xl border border-orange-200/90 bg-white p-6 shadow-md md:p-8">
+    <div className="mx-auto flex w-full max-w-3xl flex-col gap-5 overflow-x-hidden rounded-3xl border border-orange-200/90 bg-white p-4 shadow-md sm:p-6 md:p-8">
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-orange-100 pb-4">
         <div>
           <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-100 px-3 py-1 text-xs font-extrabold uppercase tracking-wider text-amber-800">
@@ -758,7 +758,7 @@ export default function MissionRoom({
 
       {/* ── Main Content Area ── */}
       <main
-        className="mission-content"
+        className="mission-content w-full max-w-full overflow-x-hidden px-4 sm:px-6"
         aria-label={
           activeView === "hub"
             ? `${resolvedCountryName} Learning Hub`
@@ -769,7 +769,7 @@ export default function MissionRoom({
             VIEW 1: COMPACT VERTICAL LIST COUNTRY LEARNING HUB
            ════════════════════════════════════════════════════════════════ */}
         {activeView === "hub" && (
-          <div className="mx-auto flex w-full max-w-3xl flex-col gap-5 px-2 py-2">
+          <div className="mx-auto flex w-full max-w-3xl flex-col gap-5 py-2">
             {/* Compact Country Header Card */}
             <section className="rounded-3xl border border-orange-200/90 bg-white/95 p-5 shadow-md backdrop-blur-xs md:p-6">
               <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
@@ -1031,9 +1031,9 @@ export default function MissionRoom({
             VIEW 2: INDIVIDUAL MODULE WORKSPACES (WITH BACK TO HUB BAR)
            ════════════════════════════════════════════════════════════════ */}
         {activeView !== "hub" && (
-          <div className="mx-auto flex w-full max-w-4xl flex-col gap-4">
+          <div className="mx-auto flex w-full max-w-4xl flex-col items-center gap-4">
             {/* Prominent Return Bar inside every active module view */}
-            <div className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-orange-200/80 bg-white/90 px-4 py-2.5 shadow-2xs backdrop-blur-xs">
+            <div className="flex w-full flex-wrap items-center justify-between gap-2 rounded-2xl border border-orange-200/80 bg-white/90 px-4 py-2.5 shadow-2xs backdrop-blur-xs">
               <button
                 type="button"
                 onClick={() => setActiveView("hub")}
@@ -1062,98 +1062,101 @@ export default function MissionRoom({
               </div>
             </div>
 
-            {activeView === "briefing" && mission.briefing && (
-              <MissionBriefing
-                missionTitle={mission.title}
-                briefing={mission.briefing}
-                onStart={() => setActiveView("hub")}
-              />
-            )}
+            {/* Horizontally Centered Play-Area Container */}
+            <div className="mx-auto flex w-full max-w-full flex-col items-center justify-center overflow-x-hidden">
+              {activeView === "briefing" && mission.briefing && (
+                <MissionBriefing
+                  missionTitle={mission.title}
+                  briefing={mission.briefing}
+                  onStart={() => setActiveView("hub")}
+                />
+              )}
 
-            {activeView === "recap" && mission.learningRecap && (
-              <LearningRecap
-                recap={mission.learningRecap}
-                onContinue={() =>
-                  router.push(`/completion/${normalizedCountryId}`)
-                }
-              />
-            )}
+              {activeView === "recap" && mission.learningRecap && (
+                <LearningRecap
+                  recap={mission.learningRecap}
+                  onContinue={() =>
+                    router.push(`/completion/${normalizedCountryId}`)
+                  }
+                />
+              )}
 
-            {activeView === "vocabulary" && (
-              <VocabularyStage
-                items={vocabItems}
-                onComplete={() =>
-                  handleModuleComplete("vocabulary", "Vocabulary Module")
-                }
-              />
-            )}
+              {activeView === "vocabulary" && (
+                <VocabularyStage
+                  items={vocabItems}
+                  onComplete={() =>
+                    handleModuleComplete("vocabulary", "Vocabulary Module")
+                  }
+                />
+              )}
 
-            {activeView === "listening" && (
-              <ListeningStage
-                items={listenItems}
-                onComplete={() =>
-                  handleModuleComplete("listening", "Listening Practice")
-                }
-              />
-            )}
+              {activeView === "listening" && (
+                <ListeningStage
+                  items={listenItems}
+                  onComplete={() =>
+                    handleModuleComplete("listening", "Listening Practice")
+                  }
+                />
+              )}
 
-            {activeView === "circuit_repair" && (
-              <CircuitRepairGame
-                boards={circuitBoards}
-                onComplete={() =>
-                  handleModuleComplete("circuit_repair", "Circuit Repair")
-                }
-              />
-            )}
+              {activeView === "circuit_repair" && (
+                <CircuitRepairGame
+                  boards={circuitBoards}
+                  onComplete={() =>
+                    handleModuleComplete("circuit_repair", "Circuit Repair")
+                  }
+                />
+              )}
 
-            {activeView === "tech_runner" && (
-              <TechRunnerGame
-                questions={techRunnerQuestions}
-                topicLabel={mission.title}
-                onComplete={() =>
-                  handleModuleComplete("tech_runner", "Tech Runner")
-                }
-              />
-            )}
+              {activeView === "tech_runner" && (
+                <TechRunnerGame
+                  questions={techRunnerQuestions}
+                  topicLabel={mission.title}
+                  onComplete={() =>
+                    handleModuleComplete("tech_runner", "Tech Runner")
+                  }
+                />
+              )}
 
-            {activeView === "target_smasher" && (
-              <TargetSmasherGame
-                items={targetSmasherItems}
-                topicLabel={mission.title}
-                onComplete={() =>
-                  handleModuleComplete("target_smasher", "Target Smasher")
-                }
-              />
-            )}
+              {activeView === "target_smasher" && (
+                <TargetSmasherGame
+                  items={targetSmasherItems}
+                  topicLabel={mission.title}
+                  onComplete={() =>
+                    handleModuleComplete("target_smasher", "Target Smasher")
+                  }
+                />
+              )}
 
-            {isGameView &&
-              activeView !== "circuit_repair" &&
-              activeView !== "tech_runner" &&
-              activeView !== "target_smasher" && (
-              <SentenceStage
-                key={activeView}
-                items={sentItems}
-                onComplete={() =>
-                  handleModuleComplete(
-                    activeView,
-                    GAME_META[activeView as CountryGameType]?.title ||
-                      "Game Arena"
-                  )
-                }
-              />
-            )}
+              {isGameView &&
+                activeView !== "circuit_repair" &&
+                activeView !== "tech_runner" &&
+                activeView !== "target_smasher" && (
+                <SentenceStage
+                  key={activeView}
+                  items={sentItems}
+                  onComplete={() =>
+                    handleModuleComplete(
+                      activeView,
+                      GAME_META[activeView as CountryGameType]?.title ||
+                        "Game Arena"
+                    )
+                  }
+                />
+              )}
 
-            {activeView === "speaking-ai" && (
-              <SpeakingAiStage
-                countryName={resolvedCountryName}
-                missionTitle={mission.title}
-                turns={speakingTurns}
-                onBack={() => setActiveView("hub")}
-                onComplete={() =>
-                  handleModuleComplete("speaking-ai", "Speaking AI Coach")
-                }
-              />
-            )}
+              {activeView === "speaking-ai" && (
+                <SpeakingAiStage
+                  countryName={resolvedCountryName}
+                  missionTitle={mission.title}
+                  turns={speakingTurns}
+                  onBack={() => setActiveView("hub")}
+                  onComplete={() =>
+                    handleModuleComplete("speaking-ai", "Speaking AI Coach")
+                  }
+                />
+              )}
+            </div>
           </div>
         )}
       </main>
